@@ -1,0 +1,15 @@
+[project]
+name = "vis-lang-interface"
+version = "1.0.0"
+description = "The shared contract for Vis language extensions, with exact JSON and TOML checks."
+requires-python = ">=3.11"
+dependencies = ["vis-agent>=0.2.10"]
+
+[tool.vis]
+category = "tools"
+source_paths = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+# TestResult and TestFailure are contract types, not test cases: collect functions only.
+python_classes = []

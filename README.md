@@ -1,26 +1,64 @@
 # vis-lang-interface
 
-The public language surface for [Vis](https://github.com/Blockether/vis): the extension that
-publishes `format_code`, `lint_code`, `run_tests`, `repl_start`, `repl_eval`, `repl_status`,
-`repl_stop` and `connect_repl`, and the registrar every language pack hooks into.
+The shared contract for [Vis](https://github.com/Blockether/vis) language extensions, written in
+Python, plus the JSON and TOML tools it can serve on its own.
 
-Vis itself knows no language. It loads this extension; this extension loads the packs it finds
-and dispatches each call to the pack that claims the language.
+Vis knows nothing about programming languages. A language extension runs that language's own
+toolchain and hands the model back a result; this package is what those results look like, so
+`clj.lint_code` and `py.lint_code` read the same way and one presentation renders both.
 
-## What lives here
+## Install
 
-- **Registrar** — a pack declares itself with `META-INF/vis-lang/pack.edn` or registers
-  programmatically; this library validates it and publishes its handlers.
-- **REPL interface** — the session lifecycle every managed REPL follows, whatever language runs it.
-- **Balance interface** — the delimiter-repair hook the write gate spends before a patch lands.
-- **Prompt** — the capability block that tells a model which packs are active.
-- **Shared utilities** — verdict documents, workspace detection, output limits, activity presentation.
+```bash
+vis-agent extension install Blockether/vis-lang-interface --global --trust
+```
 
-## Packs
+That gives you two tools under the `data` namespace:
 
-- [vis-lang-python](https://github.com/Blockether/vis-lang-python)
-- [vis-lang-clojure](https://github.com/Blockether/vis-lang-clojure)
+```python
+data.check(["config"])                            # parse every JSON and TOML file under config/
+data.format(["package.json"], is_written=True)    # reformat JSON in place
+```
 
-## Status
+`check` reports one located finding per file that does not parse. `format` rewrites JSON only
+when you ask for it; TOML has no standard-library writer, so it is checked and never rewritten.
 
-Early: extraction from the Vis engine is in progress. Until the first release, pin by commit.
+## Building a language extension on it
+
+Add the package as a dependency of your extension and return its result types:
+
+```toml
+dependencies = [
+  "vis-agent>=0.2.10",
+  "vis-lang-interface @ git+https://github.com/Blockether/vis-lang-interface@v1.0.0",
+]
+```
+
+```python
+from vis_lang_interface import LintResult, process
+
+def lint(paths):
+    done = process.run(["ruff", "check", "--output-format=json", *paths])
+    return LintResult.of("python", findings_of(done.out), files=len(paths))
+```
+
+| Module | What it gives you |
+| --- | --- |
+| `vis_lang_interface.results` | `Diagnostic`, `FormatResult`, `LintResult`, `TestResult`, `TestFailure`, `ReplResult`, `ReplSession` |
+| `vis_lang_interface.process` | `run`, `tool_path`, `ToolRun`, `ToolMissing`, `ToolTimeout` |
+| `vis_lang_interface.project` | `project_root`, `source_files` |
+| `vis_lang_interface.presentation` | Activity rendering every language binding shares |
+| `vis_lang_interface.data` | Exact JSON and TOML checks from the standard library |
+
+## The extensions that use it
+
+- [vis-lang-clojure](https://github.com/Blockether/vis-lang-clojure) — cljfmt, zprint, clj-kondo,
+  Lazytest and an nREPL, through the `clojure` CLI.
+- [vis-lang-python](https://github.com/Blockether/vis-lang-python) — ruff, pytest and a managed
+  project REPL.
+
+## Development
+
+```bash
+vis-agent python -m pytest tests -q
+```

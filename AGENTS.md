@@ -1,12 +1,15 @@
 # vis-lang-interface
 
-The public language surface Vis loads: registrar, REPL interface, balance interface, prompt.
+Python only. This repository is the contract every Vis language extension answers with; Vis
+itself has no language contract and must never gain one.
 
-- The engine is a development dependency only. Nothing here may be required at runtime by vis
-  in a way that makes the dependency circular: vis pins this library, never the other way round.
-- Public API lives in `com.blockether.vis.lang.interface.core` (registration, tools and prompt) and
-  `…presentation`; `…packs` discovers the pack jars. Everything else is internal and may change.
-- Tests are Lazytest, not `clojure.test`: `clojure -M:test`.
-- Formatting is zprint with the repository's `.zprint.edn`; lint is clj-kondo.
-- Keep the user-visible contract (tool names, parameters, results, activity presentation)
-  identical to the engine version this code came from. Compatibility is the point of the split.
+- `src/vis_lang_interface/` is a library other extensions import as a Git dependency, and
+  `extension.py` is the Vis entrypoint for the JSON and TOML tools it serves itself.
+- Result types are frozen dataclasses with `Annotated` fields. Adding a field is a version bump
+  for every extension that returns it; renaming one breaks them, so change names deliberately.
+- Every exported method owns an explicit Activity presentation with a capitalized English label.
+  Quick local reads use `show_start=False`. Cover success, failure and empty states in tests.
+- Formatting and lint are ruff. Tests are pytest:
+  `vis-agent python -m pytest tests -q` from the repository root.
+- No Clojure, no JVM, no tree-sitter and no parser of our own: a verdict comes from the parser
+  the language already ships.
