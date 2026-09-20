@@ -1,6 +1,6 @@
 [project]
 name = "vis-lang-interface"
-version = "1.0.0"
+version = "1.0.1"
 description = "The shared contract for Vis language extensions, with exact JSON and TOML checks."
 requires-python = ">=3.11"
 dependencies = ["vis-agent>=0.2.10"]

@@ -26,7 +26,7 @@ vis.register_extension(
     vis.Extension(
         name="vis-lang-interface",
         description="The shared contract for Vis language extensions, with exact JSON and TOML checks.",
-        version="1.0.0",
+        version="1.0.1",
         alias="data",
         symbols=[vis.Symbol(DataTools(), name="data")],
     )
