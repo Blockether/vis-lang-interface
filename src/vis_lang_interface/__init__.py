@@ -12,7 +12,6 @@ Import what you need:
 * `process` — running a toolchain program and reading what it printed.
 * `project` — finding the project directory and its source files.
 * `presentation` — the Activity rendering the results share.
-* `data` — exact JSON and TOML checks from the standard library.
 """
 
 from vis_lang_interface.process import ToolMissing, ToolRun, ToolTimeout, run, tool_path

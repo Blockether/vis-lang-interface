@@ -4,7 +4,7 @@ Python only. This repository is the contract every Vis language extension answer
 itself has no language contract and must never gain one.
 
 - `src/vis_lang_interface/` is a library other extensions import as a Git dependency, and
-  `extension.py` is the Vis entrypoint for the JSON and TOML tools it serves itself.
+  `extension.py` registers that contract with Vis; it serves no tools of its own.
 - Result types are frozen dataclasses with `Annotated` fields. Adding a field is a version bump
   for every extension that returns it; renaming one breaks them, so change names deliberately.
 - Every exported method owns an explicit Activity presentation with a capitalized English label.
