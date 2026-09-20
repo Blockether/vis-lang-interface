@@ -1,6 +1,7 @@
 """Vis entrypoint. The contract and the tools live in vis_lang_interface."""
 
 import blockether.vis.extension as vis
+
 from vis_lang_interface import presentation
 from vis_lang_interface.tools import DataTools
 

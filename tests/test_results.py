@@ -1,6 +1,7 @@
 """The contract types keep their own counts honest."""
 
 import pytest
+
 from vis_lang_interface import Diagnostic, LintResult, TestFailure, TestResult
 
 

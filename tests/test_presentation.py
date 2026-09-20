@@ -1,7 +1,14 @@
 """Every language binding renders the same states the same way."""
 
-from vis_lang_interface import Diagnostic, FormatResult, LintResult, ReplResult
-from vis_lang_interface import TestFailure, TestResult, presentation
+from vis_lang_interface import (
+    Diagnostic,
+    FormatResult,
+    LintResult,
+    ReplResult,
+    TestFailure,
+    TestResult,
+    presentation,
+)
 
 
 def test_clean_lint_summarizes_the_file_count():

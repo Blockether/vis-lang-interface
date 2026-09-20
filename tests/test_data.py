@@ -1,6 +1,7 @@
 """JSON and TOML verdicts come from the standard library's own parsers."""
 
 import pytest
+
 from vis_lang_interface import data
 
 

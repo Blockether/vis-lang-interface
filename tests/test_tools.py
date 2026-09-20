@@ -1,6 +1,7 @@
 """The extension's own tools walk directories and refuse empty selections."""
 
 import pytest
+
 from vis_lang_interface.tools import DataTools
 
 
