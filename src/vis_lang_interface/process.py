@@ -143,7 +143,7 @@ def run_directory(name="run"):
     return Path(tempfile.mkdtemp(prefix=f"{RUN_PREFIX}{name}-"))
 
 
-def run(command, *, cwd=None, timeout_s=300, stdin=None, env=None):
+def run(command, *, cwd=None, timeout_s=300, stdin=None, env=None, read_write=()):
     """Run `command` to completion and capture what it printed.
 
     Args:
@@ -153,6 +153,9 @@ def run(command, *, cwd=None, timeout_s=300, stdin=None, env=None):
         stdin: Text to write to the process, or None.
         env: Variables for this run, over the ones it inherits; a name mapped to
             None is unset.
+        read_write: Paths outside the session's own roots this run may read and
+            write, such as the dependency cache its toolchain fills. The private
+            run directory is granted on top of these.
 
     Returns:
         A `ToolRun`, whatever the exit status.
@@ -176,7 +179,13 @@ def run(command, *, cwd=None, timeout_s=300, stdin=None, env=None):
             in_file.write_text(str(stdin), encoding="utf-8")
             line += f" <{shlex.quote(str(in_file))}"
         started = time.monotonic()
-        handle = spawn(line, cwd=cwd, env=env, timeout_s=timeout_s, read_write=[work])
+        handle = spawn(
+            line,
+            cwd=cwd,
+            env=env,
+            timeout_s=timeout_s,
+            read_write=[work, *read_write],
+        )
         # A spawn answers as soon as it has a handle; the wait is where a
         # command that is still running spends its budget.
         settled = (

@@ -72,3 +72,38 @@ def test_inside_vis_every_child_goes_through_the_jail(monkeypatch):
     assert process.shell_call() is vis.shell
     monkeypatch.delattr(vis, "outside")
     assert process.shell_call() is vis.jailed_shell
+
+
+def _recorded(monkeypatch):
+    """The options every child of this test is started with."""
+    seen = []
+    started = vis.shell
+
+    def recording(options):
+        seen.append(dict(options))
+        return started(options)
+
+    monkeypatch.setattr(vis, "shell", recording)
+    return seen
+
+
+def test_a_run_grants_only_its_own_directory_by_default(monkeypatch):
+    seen = _recorded(monkeypatch)
+    done = process.run([sys.executable, "-c", "print('hi')"])
+    assert done.is_ok is True
+    granted = seen[0]["allow_read_write"]
+    assert len(granted) == 1
+    assert process.RUN_PREFIX in granted[0]
+
+
+def test_a_run_carries_the_paths_its_caller_named(monkeypatch, tmp_path):
+    """A toolchain reaches its own dependency cache only when the run grants it."""
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    seen = _recorded(monkeypatch)
+    done = process.run([sys.executable, "-c", "print('hi')"], read_write=[cache])
+    assert done.is_ok is True
+    granted = seen[0]["allow_read_write"]
+    assert str(cache) in granted
+    assert len(granted) == 2
+    assert process.RUN_PREFIX in granted[0]
