@@ -2,6 +2,7 @@
 
 import sys
 
+import blockether.vis.extension as vis
 import pytest
 
 from vis_lang_interface import ToolMissing, ToolTimeout, process
@@ -29,6 +30,28 @@ def test_run_reads_stdin():
     assert done.out.strip() == "ABC"
 
 
+def test_the_two_streams_stay_apart():
+    """A pty would merge them; a tool's output is data, so each keeps its own file."""
+    done = process.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys, json; sys.stdout.write(json.dumps({'ok': True}));"
+            " sys.stderr.write('noise')",
+        ]
+    )
+    assert done.out == '{"ok": true}'
+    assert done.err == "noise"
+
+
+def test_run_applies_one_calls_environment():
+    done = process.run(
+        [sys.executable, "-c", "import os; print(os.environ['VIS_LANG_PROBE'])"],
+        env={"VIS_LANG_PROBE": "set-for-this-run"},
+    )
+    assert done.out.strip() == "set-for-this-run"
+
+
 def test_missing_program_names_itself():
     with pytest.raises(ToolMissing, match="vis-no-such-tool"):
         process.run(["vis-no-such-tool"])
@@ -41,4 +64,11 @@ def test_tool_path_includes_the_install_hint():
 
 def test_timeout_names_the_program():
     with pytest.raises(ToolTimeout, match="did not finish"):
-        process.run([sys.executable, "-c", "import time; time.sleep(5)"], timeout_s=0.2)
+        process.run([sys.executable, "-c", "import time; time.sleep(30)"], timeout_s=1)
+
+
+def test_inside_vis_every_child_goes_through_the_jail(monkeypatch):
+    """`vis.outside` exists only where there is no Vis host to confine anything."""
+    assert process.shell_call() is vis.shell
+    monkeypatch.delattr(vis, "outside")
+    assert process.shell_call() is vis.jailed_shell
