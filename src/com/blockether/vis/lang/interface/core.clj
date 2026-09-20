@@ -1009,8 +1009,22 @@
      :ext/ctx-fn language-ctx
      :ext/engine {:ext.engine/builtin? true :ext.engine/symbols symbols}}))
 
+(def python-extension-sources
+  "The Python files this library ships under `resources/vis-extensions/`, which
+   the engine materializes for the sandbox.
+
+   `language_surface.py` is the base surface — exact JSON and TOML syntax
+   verdicts — and `vis_language_surface/` is the package every surface imports,
+   including the ones the Clojure and Python packs ship. A native image lists no
+   resource DIRECTORY, so each module is written down here or it does not exist."
+  ["language_surface.py" "vis_language_surface/__init__.py" "vis_language_surface/balance.py"
+   "vis_language_surface/clojure.py" "vis_language_surface/data.py"
+   "vis_language_surface/parinfer.py" "vis_language_surface/python.py"
+   "vis_language_surface/repl.py"])
+
 (defn register!
   "Register the language surface, then every pack that shipped beside it."
   []
+  (vis/register-bundled-extension-sources! python-extension-sources)
   (vis/register-extension! vis-extension)
   (packs/initialize!))
