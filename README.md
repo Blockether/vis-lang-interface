@@ -28,7 +28,7 @@ def lint(paths):
 
 | Module | What it gives you |
 | --- | --- |
-| `vis_lang_interface.results` | `Diagnostic`, `FormatResult`, `LintResult`, `TestResult`, `TestFailure`, `ReplResult`, `ReplSession` |
+| `vis_lang_interface.results` | `Diagnostic`, `FormatResult`, `LintResult`, `TestResult`, `TestFailure`, `BuildResult`, `BuildArtifact`, `ReplResult`, `ReplSession` |
 | `vis_lang_interface.process` | `run`, `tool_path`, `ToolRun`, `ToolMissing`, `ToolTimeout` |
 | `vis_lang_interface.project` | `project_root`, `source_files` |
 | `vis_lang_interface.presentation` | Activity rendering every language binding shares |

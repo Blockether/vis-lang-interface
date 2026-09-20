@@ -17,6 +17,8 @@ Import what you need:
 from vis_lang_interface.process import ToolMissing, ToolRun, ToolTimeout, run, tool_path
 from vis_lang_interface.project import project_root, source_files
 from vis_lang_interface.results import (
+    BuildArtifact,
+    BuildResult,
     Diagnostic,
     FormatResult,
     LintResult,
@@ -27,6 +29,8 @@ from vis_lang_interface.results import (
 )
 
 __all__ = [
+    "BuildArtifact",
+    "BuildResult",
     "Diagnostic",
     "FormatResult",
     "LintResult",

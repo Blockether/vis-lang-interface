@@ -1,6 +1,8 @@
 """Every language binding renders the same states the same way."""
 
 from vis_lang_interface import (
+    BuildArtifact,
+    BuildResult,
     Diagnostic,
     FormatResult,
     LintResult,
@@ -51,6 +53,46 @@ def test_failing_tests_are_listed():
     shown = presentation.test_presentation("Run Python tests", result)
     assert shown.summary == "1 passed, 1 failed in 1.5 s"
     assert shown.content[0].rows[0][1] == "test_math.py:12"
+
+
+def test_build_lists_its_artifacts():
+    shown = presentation.build_presentation(
+        "Build Python package",
+        BuildResult.of(
+            "python",
+            "wheel",
+            artifacts=[BuildArtifact("dist/app-1.0.0-py3-none-any.whl", "wheel", 4200)],
+            duration_ms=2500,
+        ),
+    )
+    assert shown.summary == "1 artifact in 2.5 s"
+    assert shown.content[0].rows[0] == (
+        "dist/app-1.0.0-py3-none-any.whl",
+        "wheel",
+        "4.2 kB",
+    )
+
+
+def test_failed_build_shows_what_the_toolchain_reported():
+    shown = presentation.build_presentation(
+        "Build Clojure uberjar",
+        BuildResult.of(
+            "clojure",
+            "uberjar",
+            diagnostics=[Diagnostic("src/app.clj", 12, 3, "error", "Syntax error")],
+            duration_ms=800,
+        ),
+    )
+    assert shown.summary == "build failed in 0.8 s"
+    assert shown.content[0].rows[0][0] == "src/app.clj:12"
+
+
+def test_build_without_artifacts_says_so():
+    shown = presentation.build_presentation(
+        "Build Python package", BuildResult.of("python", "wheel", duration_ms=100)
+    )
+    assert shown.summary == "nothing to build in 0.1 s"
+    assert shown.content == ()
 
 
 def test_repl_error_is_shown_instead_of_a_value():

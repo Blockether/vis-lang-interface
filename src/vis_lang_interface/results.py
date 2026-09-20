@@ -113,6 +113,62 @@ class TestResult:
 
 
 @dataclass(frozen=True)
+class BuildArtifact:
+    """One file a build produced."""
+
+    path: Annotated[str, "Path of the file the build wrote."]
+    kind: Annotated[str, "What it is: wheel, sdist, jar, uberjar, binary or archive."]
+    size_bytes: Annotated[int, "Size of the file in bytes, or 0 when unknown."] = 0
+
+
+@dataclass(frozen=True)
+class BuildResult:
+    """What a build produced, and what the toolchain reported while producing it."""
+
+    language: Annotated[str, "Language that was built."]
+    target: Annotated[str, "What was built, as the toolchain names it: wheel, uberjar."]
+    artifacts: Annotated[tuple[BuildArtifact, ...], "Files the build wrote."]
+    diagnostics: Annotated[tuple[Diagnostic, ...], "Findings the build reported."]
+    errors: Annotated[int, "Findings at error level."]
+    warnings: Annotated[int, "Findings at warning level."]
+    duration_ms: Annotated[int, "Wall time of the build in milliseconds."]
+    output: Annotated[str, "Tail of the toolchain's own output."] = ""
+    is_built: Annotated[bool, "Whether the build finished without an error."] = False
+
+    @classmethod
+    def of(
+        cls,
+        language,
+        target,
+        *,
+        artifacts=(),
+        diagnostics=(),
+        duration_ms=0,
+        output="",
+        is_built=True,
+    ):
+        """A result whose counts are derived from `diagnostics`.
+
+        A build that reported an error is never built, whatever `is_built` says,
+        so a green summary can never sit above an error in the list.
+        """
+        rows = tuple(diagnostics)
+        errors = sum(1 for row in rows if row.level == "error")
+        warnings = sum(1 for row in rows if row.level == "warning")
+        return cls(
+            language,
+            target,
+            tuple(artifacts),
+            rows,
+            errors,
+            warnings,
+            int(duration_ms),
+            output,
+            bool(is_built) and errors == 0,
+        )
+
+
+@dataclass(frozen=True)
 class ReplResult:
     """What one evaluation in a live REPL produced."""
 

@@ -19,6 +19,20 @@ def _files(count):
     return f"{count} file" if count == 1 else f"{count} files"
 
 
+def _artifacts(count):
+    """`count` as "1 artifact" or "3 artifacts"."""
+    return f"{count} artifact" if count == 1 else f"{count} artifacts"
+
+
+def _size(count):
+    """`count` bytes as a short, readable size."""
+    if count < 1000:
+        return f"{count} B"
+    if count < 1000 * 1000:
+        return f"{count / 1000:.1f} kB"
+    return f"{count / 1000 / 1000:.1f} MB"
+
+
 def _clip(text, limit=MAX_TEXT):
     """`text` shortened to `limit` characters, marked when anything was dropped."""
     body = text.strip()
@@ -83,6 +97,37 @@ def test_presentation(label, result):
         )
         content.append(vis.ActivityTable(("Test", "Location", "Message"), rows))
     elif result.output:
+        content.append(vis.ActivityText(_clip(result.output)))
+    return vis.ActivityPresentation(label, summary, tuple(content))
+
+
+def build_presentation(label, result):
+    """Presentation for a `BuildResult`."""
+    seconds = result.duration_ms / 1000
+    if not result.is_built:
+        summary = f"build failed in {seconds:.1f} s"
+    elif result.artifacts:
+        summary = f"{_artifacts(len(result.artifacts))} in {seconds:.1f} s"
+    else:
+        summary = f"nothing to build in {seconds:.1f} s"
+    content = []
+    if result.artifacts:
+        rows = tuple(
+            (artifact.path, artifact.kind, _size(artifact.size_bytes))
+            for artifact in result.artifacts[:MAX_ROWS]
+        )
+        content.append(vis.ActivityTable(("Artifact", "Kind", "Size"), rows))
+    if result.diagnostics:
+        rows = tuple(
+            (
+                f"{row.path}:{row.line}" if row.path else str(row.line),
+                row.level,
+                row.message,
+            )
+            for row in result.diagnostics[:MAX_ROWS]
+        )
+        content.append(vis.ActivityTable(("Location", "Level", "Message"), rows))
+    elif not result.artifacts and result.output:
         content.append(vis.ActivityText(_clip(result.output)))
     return vis.ActivityPresentation(label, summary, tuple(content))
 

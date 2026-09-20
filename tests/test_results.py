@@ -2,7 +2,14 @@
 
 import pytest
 
-from vis_lang_interface import Diagnostic, LintResult, TestFailure, TestResult
+from vis_lang_interface import (
+    BuildArtifact,
+    BuildResult,
+    Diagnostic,
+    LintResult,
+    TestFailure,
+    TestResult,
+)
 
 
 def test_lint_result_counts_levels():
@@ -47,3 +54,33 @@ def test_test_result_passes_only_without_failures():
     assert passing.is_passed is True
     assert failing.is_passed is False
     assert failing.failures[0].test == "test_add"
+
+
+def test_build_result_counts_its_findings():
+    result = BuildResult.of(
+        "python",
+        "wheel",
+        artifacts=[BuildArtifact("dist/app-1.0.0-py3-none-any.whl", "wheel", 4200)],
+        diagnostics=[Diagnostic("pyproject.toml", 0, 0, "warning", "deprecated field")],
+        duration_ms=900,
+    )
+    assert (result.errors, result.warnings) == (0, 1)
+    assert result.is_built is True
+    assert result.artifacts[0].kind == "wheel"
+
+
+def test_build_with_an_error_is_never_built():
+    result = BuildResult.of(
+        "clojure",
+        "uberjar",
+        diagnostics=[Diagnostic("src/app.clj", 12, 3, "error", "Syntax error")],
+        duration_ms=300,
+    )
+    assert result.is_built is False
+    assert result.errors == 1
+
+
+def test_failed_build_keeps_no_artifacts():
+    result = BuildResult.of("python", "sdist", duration_ms=10, is_built=False)
+    assert result.is_built is False
+    assert result.artifacts == ()
