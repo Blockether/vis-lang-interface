@@ -33,6 +33,30 @@ def lint(paths):
 | `vis_lang_interface.runtime` | `start`, `Runtime`, `Rendezvous`, `RuntimeGone` — a runtime that stays alive between calls |
 | `vis_lang_interface.project` | `project_root`, `source_files` |
 | `vis_lang_interface.presentation` | Activity rendering every language binding shares |
+| `vis_lang_interface.prompt` | `routing` — the block that tells the model your verbs exist |
+
+## Tell the model your verbs exist
+
+Vis prints one section per active extension into the system prompt. An extension that contributes
+none still works, but the model has to discover it first, so it reaches for a shell line it already
+knows and never asks whether the REPL this session started is still running — nothing else reports
+that. `prompt.routing` writes that section for you:
+
+```python
+from vis_lang_interface import prompt
+
+PROMPT = prompt.routing(
+    "Python",
+    "py",
+    ("format_code", "lint_code", "run_tests", "repl_start", "repl_eval", "repl_stop"),
+    notes=("`py.repl_eval` needs the REPL `py.repl_start` already started.",),
+)
+
+vis.register_extension(vis.Extension(..., alias="py", prompt=PROMPT))
+```
+
+Keep `notes` to routing and policy — when a verb is the right approach and what it refuses. Each
+method's own docstring already carries its arguments and its result.
 
 ## Everything a language tool starts runs in the jail
 

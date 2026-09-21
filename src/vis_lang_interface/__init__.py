@@ -16,6 +16,7 @@ Import what you need:
 * `runtime` — a language runtime that outlives the call that started it.
 * `project` — finding the project directory and its source files.
 * `presentation` — the Activity rendering the results share.
+* `prompt` — the routing block the extension puts in the system prompt.
 """
 
 from vis_lang_interface.process import (
