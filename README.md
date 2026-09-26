@@ -32,7 +32,7 @@ def lint(paths):
 | `vis_lang_interface.process` | `run`, `spawn`, `tool_path`, `ToolRun`, `ToolMissing`, `ToolTimeout` |
 | `vis_lang_interface.runtime` | `start`, `Runtime`, `Rendezvous`, `RuntimeGone` — a runtime that stays alive between calls |
 | `vis_lang_interface.project` | `project_root`, `source_files` |
-| `vis_lang_interface.presentation` | Activity rendering every language binding shares |
+| `vis_lang_interface.presentation` | Activity rendering every language binding shares, with a pass or fail verdict for lint and test runs |
 | `vis_lang_interface.prompt` | `routing` — the block that tells the model your verbs exist |
 
 ## Tell the model your verbs exist

@@ -1,5 +1,7 @@
 """Every language binding renders the same states the same way."""
 
+import pytest
+
 from vis_lang_interface import (
     BuildArtifact,
     BuildResult,
@@ -114,3 +116,33 @@ def test_renderer_covers_start_success_and_failure():
     failed = render(phase="failure", error=RuntimeError("clj-kondo is not on PATH"))
     assert failed.summary == "failed"
     assert "clj-kondo" in failed.content[0].text
+
+
+def _lint(*levels):
+    findings = [Diagnostic("a.clj", 3, 1, level, "unused binding") for level in levels]
+    return presentation.lint_presentation(
+        "Lint Clojure code", LintResult.of("clojure", findings, files=1)
+    )
+
+
+def _tests(failed):
+    result = TestResult.of(
+        "python", total=2, passed=2 - failed, failed=failed, skipped=0, duration_ms=10
+    )
+    return presentation.test_presentation("Run Python tests", result)
+
+
+@pytest.mark.skipif(
+    not presentation._REPORTS_VERDICT, reason="this Vis SDK predates check verdicts"
+)
+def test_checks_tell_vis_whether_they_passed():
+    assert [_lint().verdict, _lint("warning").verdict] == ["passed", "failed"]
+    assert [_tests(0).verdict, _tests(1).verdict] == ["passed", "failed"]
+    assert _tests(1).to_wire()["verdict"] == "failed"
+
+
+def test_checks_render_on_hosts_without_verdicts(monkeypatch):
+    monkeypatch.setattr(presentation, "_REPORTS_VERDICT", False)
+    shown = _tests(1)
+    assert shown.summary == "1 passed, 1 failed in 0.0 s"
+    assert "verdict" not in shown.to_wire()

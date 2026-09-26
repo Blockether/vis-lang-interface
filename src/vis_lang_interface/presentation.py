@@ -8,10 +8,17 @@ findings themselves. Build a render callback with `renderer` and hand it to
 
 from __future__ import annotations
 
+from dataclasses import fields
+
 import blockether.vis.extension as vis
 
 MAX_ROWS = 20
 MAX_TEXT = 4000
+
+# Vis hosts that predate check verdicts refuse the keyword; the summary reports alone.
+_REPORTS_VERDICT = "verdict" in {
+    field.name for field in fields(vis.ActivityPresentation)
+}
 
 
 def _files(count):
@@ -41,6 +48,14 @@ def _clip(text, limit=MAX_TEXT):
     return body[:limit] + "\n… truncated"
 
 
+def _checks(label, summary, content, *, is_passed):
+    """A check's presentation, carrying its verdict to Vis hosts that read one."""
+    if not _REPORTS_VERDICT:
+        return vis.ActivityPresentation(label, summary, content)
+    verdict = "passed" if is_passed else "failed"
+    return vis.ActivityPresentation(label, summary, content, verdict=verdict)
+
+
 def format_presentation(label, result):
     """Presentation for a `FormatResult`."""
     changed = len(result.changed)
@@ -61,7 +76,8 @@ def format_presentation(label, result):
 def lint_presentation(label, result):
     """Presentation for a `LintResult`."""
     if result.is_clean:
-        return vis.ActivityPresentation(label, f"no findings in {_files(result.files)}")
+        summary = f"no findings in {_files(result.files)}"
+        return _checks(label, summary, (), is_passed=True)
     summary = (
         f"{result.errors} errors, {result.warnings} warnings in {_files(result.files)}"
     )
@@ -75,7 +91,7 @@ def lint_presentation(label, result):
         for row in result.diagnostics[:MAX_ROWS]
     )
     table = vis.ActivityTable(("Location", "Level", "Rule", "Message"), rows)
-    return vis.ActivityPresentation(label, summary, (table,))
+    return _checks(label, summary, (table,), is_passed=False)
 
 
 def test_presentation(label, result):
@@ -98,7 +114,7 @@ def test_presentation(label, result):
         content.append(vis.ActivityTable(("Test", "Location", "Message"), rows))
     elif result.output:
         content.append(vis.ActivityText(_clip(result.output)))
-    return vis.ActivityPresentation(label, summary, tuple(content))
+    return _checks(label, summary, tuple(content), is_passed=result.is_passed)
 
 
 def build_presentation(label, result):
