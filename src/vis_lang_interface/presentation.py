@@ -2,18 +2,27 @@
 
 Every language extension shows the same thing for the same kind of work: a
 capitalized headline naming the task, a summary a reader can act on, and the
-findings themselves. Build a render callback with `renderer` and hand it to
-`vis.Activity`.
+findings themselves, grouped where a reader looks for them: lint findings by
+directory, a test run by failing test. Nothing below a summary repeats it.
+Build a render callback with `renderer` and hand it to `vis.Activity`.
 """
 
 from __future__ import annotations
 
+import posixpath
 from dataclasses import fields
 
 import blockether.vis.extension as vis
 
+from vis_lang_interface.results import LEVELS
+
 MAX_ROWS = 20
 MAX_TEXT = 4000
+# A directory's findings and a run's failing tests each wait behind their own
+# disclosure; these bounds only stop a pathological run, and a cut is labelled.
+MAX_FINDINGS = 100
+MAX_SECTIONS = 50
+MAX_LINE = 200
 
 # Vis hosts that predate check verdicts refuse the keyword; the summary reports alone.
 _REPORTS_VERDICT = "verdict" in {
@@ -48,12 +57,47 @@ def _clip(text, limit=MAX_TEXT):
     return body[:limit] + "\n… truncated"
 
 
-def _checks(label, summary, content, *, is_passed):
+def _count(count, noun):
+    """`count` with its noun, as "1 error", "2 errors" or "2 info"."""
+    if count == 1 or noun == "info":
+        return f"{count} {noun}"
+    return f"{count} {noun}s"
+
+
+def _tally(rows):
+    """Non-zero finding counts of `rows` by level, as "2 errors, 1 warning"."""
+    counts = {level: sum(1 for row in rows if row.level == level) for level in LEVELS}
+    return ", ".join(_count(count, level) for level, count in counts.items() if count)
+
+
+def _flat(text):
+    """`text` on one line: control characters and whitespace runs become one space."""
+    return " ".join("".join(c if c.isprintable() else " " for c in text).split())
+
+
+def _line(text, limit=MAX_LINE):
+    """`text` as one line a headline or summary can carry, marked when cut."""
+    line = _flat(text)
+    if len(line) > limit:
+        line = line[: limit - 1].rstrip() + "…"
+    if len(line.encode("utf-8")) > 512:
+        line = line.encode("utf-8")[:509].decode("utf-8", "ignore") + "…"
+    return line
+
+
+def _location(path, line):
+    """`path:line`, or whichever of the two is known."""
+    if path and line:
+        return f"{path}:{line}"
+    return path or (str(line) if line else "")
+
+
+def _checks(label, summary, content, sections=(), *, is_passed):
     """A check's presentation, carrying its verdict to Vis hosts that read one."""
     if not _REPORTS_VERDICT:
-        return vis.ActivityPresentation(label, summary, content)
+        return vis.ActivityPresentation(label, summary, content, sections)
     verdict = "passed" if is_passed else "failed"
-    return vis.ActivityPresentation(label, summary, content, verdict=verdict)
+    return vis.ActivityPresentation(label, summary, content, sections, verdict=verdict)
 
 
 def format_presentation(label, result):
@@ -73,48 +117,119 @@ def format_presentation(label, result):
     return vis.ActivityPresentation(label, summary, rows)
 
 
+def _findings(rows, directory=""):
+    """`rows` as a findings table; within `directory` a file is named alone."""
+    shown = rows[:MAX_FINDINGS]
+    table = vis.ActivityTable(
+        ("Location", "Level", "Rule", "Message"),
+        tuple(
+            (
+                _location(
+                    posixpath.basename(row.path) if directory else row.path, row.line
+                ),
+                row.level,
+                row.rule,
+                row.message,
+            )
+            for row in shown
+        ),
+    )
+    if len(shown) == len(rows):
+        return (table,)
+    note = f"Showing the first {len(shown)} of {len(rows)} findings."
+    return (table, vis.ActivityText(note))
+
+
+def _directory_section(directory, rows):
+    """One directory's findings, with its own counts in the summary."""
+    files = sorted({row.path for row in rows})
+    where = posixpath.basename(files[0]) if len(files) == 1 else _files(len(files))
+    return vis.ActivitySection(
+        _line(directory),
+        _line(f"{_tally(rows)} in {where}"),
+        _findings(rows, directory),
+    )
+
+
 def lint_presentation(label, result):
-    """Presentation for a `LintResult`."""
+    """Presentation for a `LintResult`, its findings grouped by directory.
+
+    Each directory is a section whose summary carries its own counts, so a reader
+    sees where the findings are before opening any of them. Findings in a single
+    directory need no grouping and form one table.
+    """
     if result.is_clean:
-        summary = f"no findings in {_files(result.files)}"
-        return _checks(label, summary, (), is_passed=True)
-    summary = (
-        f"{result.errors} errors, {result.warnings} warnings in {_files(result.files)}"
+        checked = f" in {_files(result.files)}" if result.files else ""
+        return _checks(label, f"no findings{checked}", (), is_passed=True)
+    rows = result.diagnostics
+    flagged = len({row.path for row in rows})
+    where = (
+        f"{flagged} of {_files(result.files)}"
+        if result.files > flagged
+        else _files(flagged)
     )
-    rows = tuple(
-        (
-            f"{row.path}:{row.line}" if row.path else str(row.line),
-            row.level,
-            row.rule,
-            row.message,
-        )
-        for row in result.diagnostics[:MAX_ROWS]
+    summary = f"{_tally(rows)} in {where}"
+    groups = {}
+    for row in rows:
+        groups.setdefault(posixpath.dirname(row.path) or ".", []).append(row)
+    if len(groups) == 1:
+        return _checks(label, summary, _findings(rows), is_passed=False)
+    directories = sorted(groups)
+    sections = tuple(
+        _directory_section(directory, groups[directory])
+        for directory in directories[:MAX_SECTIONS]
     )
-    table = vis.ActivityTable(("Location", "Level", "Rule", "Message"), rows)
-    return _checks(label, summary, (table,), is_passed=False)
+    content = ()
+    if len(directories) > MAX_SECTIONS:
+        note = f"Showing the first {MAX_SECTIONS} of {len(directories)} directories."
+        content = (vis.ActivityText(note),)
+    return _checks(label, summary, content, sections, is_passed=False)
+
+
+def _test_counts(result):
+    """The run's non-zero counts, failures first as runners print them."""
+    counts = (
+        (result.failed, "failed"),
+        (result.passed, "passed"),
+        (result.skipped, "skipped"),
+    )
+    said = ", ".join(f"{count} {word}" for count, word in counts if count)
+    return said or "no tests ran"
+
+
+def _failure_section(failure):
+    """One failing test: where and why on one line, the whole message behind it."""
+    message = failure.message.strip()
+    lines = message.splitlines()
+    reason = lines[0] if lines else ""
+    said = " · ".join(
+        part for part in (_location(failure.path, failure.line), reason) if part
+    )
+    summary = _line(said)
+    is_whole = len(lines) <= 1 and summary == _flat(said)
+    content = () if is_whole else (vis.ActivityCode(_clip(message)),)
+    headline = _line(failure.test) or _line(failure.path) or "Unnamed test"
+    return vis.ActivitySection(headline, summary or "no message", content)
 
 
 def test_presentation(label, result):
-    """Presentation for a `TestResult`."""
-    seconds = result.duration_ms / 1000
-    counts = f"{result.passed} passed, {result.failed} failed"
-    if result.skipped:
-        counts += f", {result.skipped} skipped"
-    summary = f"{counts} in {seconds:.1f} s"
-    content = []
-    if result.failures:
-        rows = tuple(
-            (
-                failure.test,
-                f"{failure.path}:{failure.line}" if failure.path else "",
-                failure.message.splitlines()[0] if failure.message else "",
-            )
-            for failure in result.failures[:MAX_ROWS]
+    """Presentation for a `TestResult`, one section per failing test.
+
+    A passing run's own output only repeats its counts, so the output appears
+    only for a failed run that named no failing test, where it is the evidence.
+    """
+    summary = f"{_test_counts(result)} in {result.duration_ms / 1000:.1f} s"
+    shown = result.failures[:MAX_SECTIONS]
+    sections = tuple(_failure_section(failure) for failure in shown)
+    content = ()
+    if len(shown) < len(result.failures):
+        note = (
+            f"Showing the first {len(shown)} of {len(result.failures)} failing tests."
         )
-        content.append(vis.ActivityTable(("Test", "Location", "Message"), rows))
-    elif result.output:
-        content.append(vis.ActivityText(_clip(result.output)))
-    return _checks(label, summary, tuple(content), is_passed=result.is_passed)
+        content = (vis.ActivityText(note),)
+    elif not result.failures and not result.is_passed and result.output:
+        content = (vis.ActivityCode(_clip(result.output)),)
+    return _checks(label, summary, content, sections, is_passed=result.is_passed)
 
 
 def build_presentation(label, result):
@@ -164,10 +279,13 @@ def repl_presentation(label, result):
 
 
 def session_presentation(label, session):
-    """Presentation for a `ReplSession`."""
-    summary = "running" if session.is_running else "stopped"
-    content = (vis.ActivityText(session.detail),) if session.detail else ()
-    return vis.ActivityPresentation(label, f"{session.id} {summary}", content)
+    """Presentation for a `ReplSession`: the REPL and what happened, on one line.
+
+    The detail already says what happened, so it is the summary rather than a
+    preview repeating it; a session without one reads as its state.
+    """
+    happened = session.detail or ("running" if session.is_running else "not running")
+    return vis.ActivityPresentation(label, _line(f"{session.id} · {happened}"))
 
 
 def renderer(label, build):
