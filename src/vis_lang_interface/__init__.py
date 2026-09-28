@@ -12,6 +12,7 @@ one run of a formatter or a runtime that stays alive between calls.
 Import what you need:
 
 * `results` — the frozen result types every language tool returns.
+* `changes` — the lines an edit added and removed, as formatting counts them.
 * `process` — running a toolchain program and reading what it printed.
 * `runtime` — a language runtime that outlives the call that started it.
 * `project` — finding the project directory and its source files.
@@ -19,6 +20,7 @@ Import what you need:
 * `prompt` — the routing block the extension puts in the system prompt.
 """
 
+from vis_lang_interface.changes import line_changes
 from vis_lang_interface.process import (
     ToolMissing,
     ToolRun,
@@ -57,6 +59,7 @@ __all__ = [
     "ToolMissing",
     "ToolRun",
     "ToolTimeout",
+    "line_changes",
     "project_root",
     "run",
     "source_files",

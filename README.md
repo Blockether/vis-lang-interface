@@ -29,11 +29,32 @@ def lint(paths):
 | Module | What it gives you |
 | --- | --- |
 | `vis_lang_interface.results` | `Diagnostic`, `FormatResult`, `LintResult`, `TestResult`, `TestFailure`, `BuildResult`, `BuildArtifact`, `ReplResult`, `ReplSession` |
+| `vis_lang_interface.changes` | `line_changes` — the lines an edit added and removed, as `git diff --minimal --numstat` counts them |
 | `vis_lang_interface.process` | `run`, `spawn`, `tool_path`, `ToolRun`, `ToolMissing`, `ToolTimeout` |
 | `vis_lang_interface.runtime` | `start`, `Runtime`, `Rendezvous`, `RuntimeGone` — a runtime that stays alive between calls |
 | `vis_lang_interface.project` | `project_root`, `source_files` |
 | `vis_lang_interface.presentation` | Activity rendering every language binding shares: a pass or fail verdict for lint and test runs, changed-line counts for formatting, and an evaluation's code, output, error and value |
 | `vis_lang_interface.prompt` | `routing` — the block that tells the model your verbs exist |
+
+## Count what formatting changed
+
+`FormatResult.lines_added` and `lines_removed` say how much formatting changed. Count them with
+`line_changes`, so every extension reports the numbers `git diff --minimal --numstat` gives:
+
+```python
+from vis_lang_interface import FormatResult, line_changes
+
+added, removed = line_changes(before, formatted)
+result = FormatResult(
+    "python", (path,), (), is_written=True, lines_added=added, lines_removed=removed
+)
+```
+
+A line counts with its newline: a changed line counts once as removed and once as added, and a last
+line that only gains or loses its newline counts as changed. A source file of a few thousand lines
+takes about a millisecond. A changed region of tens of thousands of lines that exact counting cannot
+settle in about half a second is matched through the lines that repeat least; its counts can then
+exceed the fewest, never fall below them.
 
 ## Tell the model your verbs exist
 
