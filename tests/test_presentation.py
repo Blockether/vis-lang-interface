@@ -92,12 +92,55 @@ def test_lint_cuts_are_labelled(monkeypatch):
     assert two.content[0].text == "Showing the first 1 of 2 directories."
 
 
-def test_format_reports_what_changed():
-    shown = presentation.format_presentation(
-        "Format Clojure code",
-        FormatResult("clojure", ("a.clj",), ("b.clj",), is_written=True),
+def _format(result):
+    return presentation.format_presentation("Format Clojure code", result)
+
+
+def test_format_counts_files_and_lines_without_listing_them():
+    shown = _format(
+        FormatResult(
+            "clojure",
+            ("a.clj",),
+            ("b.clj", "c.clj"),
+            is_written=True,
+            lines_added=3,
+            lines_removed=1,
+        )
     )
-    assert shown.summary == "1 file rewritten"
+    assert shown.summary == "1 of 3 files reformatted (+3 −1 lines)"
+    assert (shown.content, shown.sections) == ((), ())
+
+
+def test_format_check_says_which_files_need_formatting():
+    summaries = [
+        _format(FormatResult("python", changed, (), lines_added=2, lines_removed=2))
+        for changed in (("a.py",), ("a.py", "b.py"))
+    ]
+    assert [shown.summary for shown in summaries] == [
+        "1 file needs formatting (+2 −2 lines)",
+        "2 files need formatting (+2 −2 lines)",
+    ]
+
+
+def test_formatted_source_is_counted_not_shown():
+    changed = _format(
+        FormatResult("clojure", (), (), "(ns a)\n", lines_added=1, lines_removed=2)
+    )
+    assert (changed.summary, changed.content) == ("reformatted (+1 −2 lines)", ())
+    unchanged = _format(FormatResult("clojure", (), (), "(ns a)\n"))
+    assert (unchanged.summary, unchanged.content) == ("already formatted", ())
+
+
+def test_format_without_changes_or_files_says_so():
+    summaries = [
+        _format(FormatResult("clojure", (), unchanged)).summary
+        for unchanged in (("a.clj",), ("a.clj", "b.clj"), ())
+    ]
+    assert summaries == [
+        "1 file already formatted",
+        "2 files already formatted",
+        "nothing to format",
+    ]
 
 
 def test_each_failing_test_is_its_own_section():
@@ -130,7 +173,7 @@ def test_each_failing_test_is_its_own_section():
     )
     assert div.summary == "test_math.py:20 · ZeroDivisionError: division by zero"
     assert isinstance(div.content[0], vis.ActivityCode)
-    assert div.content[0].text.endswith("in divide()")
+    assert div.content[0].text == "in divide()"
 
 
 def test_a_passing_run_shows_only_its_counts():
@@ -204,6 +247,27 @@ def test_a_long_failure_stays_one_line_with_the_whole_message_behind_it():
     assert section.content[0].text == message
 
 
+def test_a_long_nested_test_name_keeps_its_own_case():
+    name = " › ".join(["an outer description " * 12, "keeps the case that failed"])
+    result = TestResult.of(
+        "clojure",
+        total=1,
+        passed=0,
+        failed=1,
+        skipped=0,
+        duration_ms=5,
+        failures=[
+            TestFailure(name, "a_test.clj", 7, "Expected: (= 1 2)\nActual: false")
+        ],
+    )
+    (section,) = presentation.test_presentation("Run Clojure tests", result).sections
+    assert section.headline.startswith("…")
+    assert section.headline.endswith("description › keeps the case that failed")
+    assert len(section.headline) <= presentation.MAX_LINE
+    assert section.summary == "a_test.clj:7 · Expected: (= 1 2)"
+    assert [block.text for block in section.content] == ["Actual: false"]
+
+
 def test_build_lists_its_artifacts():
     shown = presentation.build_presentation(
         "Build Python package",
@@ -244,13 +308,63 @@ def test_build_without_artifacts_says_so():
     assert shown.content == ()
 
 
-def test_repl_error_is_shown_instead_of_a_value():
+def _texts(shown):
+    return [block.text for block in shown.content]
+
+
+def test_an_evaluation_shows_code_output_and_value_in_order():
+    shown = presentation.repl_presentation(
+        "Evaluate in Clojure REPL",
+        ReplResult(
+            "clojure",
+            "nrepl:~/app",
+            "{:a 1,\n :b [1 2 3]}",
+            "\n  hello\n",
+            "",
+            12,
+            True,
+            code='(do\n  (println "  hello")\n  {:a 1, :b [1 2 3]})',
+        ),
+    )
+    assert shown.summary == "returned a 2-line value in 12 ms"
+    assert _texts(shown) == [
+        "Code",
+        '(do\n  (println "  hello")\n  {:a 1, :b [1 2 3]})',
+        "Output",
+        "  hello",
+        "Value",
+        "{:a 1,\n :b [1 2 3]}",
+    ]
+    code, output, value = shown.content[1::2]
+    assert [code.language, output.language, value.language] == [
+        "clojure",
+        None,
+        "clojure",
+    ]
+
+
+def test_a_failed_evaluation_shows_its_code_and_error():
+    error = "NameError: name 'x' is not defined"
     shown = presentation.repl_presentation(
         "Evaluate in Python REPL",
-        ReplResult("python", "~/app", "", "", "NameError: x", 12, True),
+        ReplResult("python", "~/app", "", "", error, 12, True, code="x + 1"),
     )
-    assert shown.summary == "evaluation failed"
-    assert "NameError" in shown.content[0].text
+    assert shown.summary == f"failed in 12 ms · {error}"
+    assert _texts(shown) == ["Code", "x + 1", "Error", error]
+
+
+def test_an_evaluation_summary_says_how_it_ended():
+    def summary(value, *, error="", is_running=True, duration_ms=3):
+        result = ReplResult("clojure", "r", value, "", error, duration_ms, is_running)
+        return presentation.repl_presentation("Evaluate", result).summary
+
+    assert summary("42") == "returned 42 in 3 ms"
+    assert summary("x" * 81) == "returned a value in 3 ms"
+    assert summary("") == "finished in 3 ms"
+    assert summary("", duration_ms=1500) == "finished in 1.5 s"
+    assert summary("", error="Timed out\nafter 3 ms", is_running=False) == (
+        "failed in 3 ms · Timed out"
+    )
 
 
 def test_a_session_says_what_happened_in_its_summary_alone():
@@ -289,6 +403,26 @@ def test_renderer_covers_start_success_and_failure():
     failed = render(phase="failure", error=RuntimeError("clj-kondo is not on PATH"))
     assert failed.summary == "failed"
     assert "clj-kondo" in failed.content[0].text
+
+
+def test_an_evaluation_shows_its_code_while_running_and_when_the_call_fails():
+    render = presentation.renderer(
+        "Evaluate in Clojure REPL",
+        lambda result: presentation.repl_presentation("Evaluate", result),
+        describe=presentation.code_argument("clojure"),
+    )
+    tools = object()
+    running = render(phase="start", args=(tools, "(+ 1 2)"), kwargs={})
+    assert (running.summary, _texts(running)) == ("running", ["Code", "(+ 1 2)"])
+    failed = render(
+        phase="failure",
+        args=(tools,),
+        kwargs={"code": "(+ 1 2)"},
+        error=RuntimeError("No REPL is running in ~/app"),
+    )
+    assert failed.summary == "failed"
+    assert _texts(failed) == ["Code", "(+ 1 2)", "Error", "No REPL is running in ~/app"]
+    assert render(phase="start", args=(tools,), kwargs={}) is None
 
 
 def _lint(*levels):

@@ -39,6 +39,12 @@ class FormatResult:
     unchanged: Annotated[tuple[str, ...], "Files that were already formatted."]
     source: Annotated[str, "Formatted text when a source string was formatted."] = ""
     is_written: Annotated[bool, "Whether the files on disk were rewritten."] = False
+    lines_added: Annotated[
+        int, "Lines formatting added, over every file or the source string."
+    ] = 0
+    lines_removed: Annotated[
+        int, "Lines formatting removed; a changed line counts as removed and added."
+    ] = 0
 
 
 @dataclass(frozen=True)
@@ -65,10 +71,12 @@ class LintResult:
 class TestFailure:
     """One failing test, located where the runner reported it."""
 
-    test: Annotated[str, "Test name as the runner spells it."]
+    test: Annotated[
+        str, "Test name as the runner spells it, nested names joined with ' › '."
+    ]
     path: Annotated[str, "File containing the test; empty when unknown."]
     line: Annotated[int, "1-based line, or 0 when the runner located nothing."]
-    message: Annotated[str, "Why it failed."]
+    message: Annotated[str, "Why it failed: the reason first, its details below."]
 
 
 @dataclass(frozen=True)
@@ -179,6 +187,7 @@ class ReplResult:
     error: Annotated[str, "Error text; empty when the evaluation succeeded."]
     duration_ms: Annotated[int, "Wall time of the evaluation in milliseconds."]
     is_running: Annotated[bool, "Whether the REPL is still available."]
+    code: Annotated[str, "The evaluated code, pretty-printed when it parses."] = ""
 
 
 @dataclass(frozen=True)

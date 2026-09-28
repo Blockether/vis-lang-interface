@@ -10,6 +10,7 @@ Build a render callback with `renderer` and hand it to `vis.Activity`.
 from __future__ import annotations
 
 import posixpath
+import textwrap
 from dataclasses import fields
 
 import blockether.vis.extension as vis
@@ -49,9 +50,21 @@ def _size(count):
     return f"{count / 1000 / 1000:.1f} MB"
 
 
+def _duration(ms):
+    """`ms` milliseconds as "12 ms" or "1.5 s"."""
+    if ms < 1000:
+        return f"{ms} ms"
+    return f"{ms / 1000:.1f} s"
+
+
 def _clip(text, limit=MAX_TEXT):
-    """`text` shortened to `limit` characters, marked when anything was dropped."""
-    body = text.strip()
+    """`text` without surrounding blank lines, cut at `limit` characters and marked.
+
+    Indentation of the first line stays, so pretty-printed code keeps its shape.
+    """
+    lines = text.rstrip().splitlines()
+    start = next((n for n, line in enumerate(lines) if line.strip()), len(lines))
+    body = "\n".join(lines[start:])
     if len(body) <= limit:
         return body
     return body[:limit] + "\n… truncated"
@@ -85,6 +98,21 @@ def _line(text, limit=MAX_LINE):
     return line
 
 
+def _tail(text, limit=MAX_LINE):
+    """`text` as one line that keeps its end, marked at the front when cut.
+
+    A nested test name ends with its own case, the part that sets it apart
+    from its siblings, so a long name loses its outer descriptions first.
+    """
+    line = _flat(text)
+    if len(line) > limit:
+        line = "…" + line[len(line) - limit + 1 :].lstrip()
+    data = line.encode("utf-8")
+    if len(data) > 512:
+        line = "…" + data[-509:].decode("utf-8", "ignore")
+    return line
+
+
 def _location(path, line):
     """`path:line`, or whichever of the two is known."""
     if path and line:
@@ -100,21 +128,37 @@ def _checks(label, summary, content, sections=(), *, is_passed):
     return vis.ActivityPresentation(label, summary, content, sections, verdict=verdict)
 
 
+def _line_changes(result):
+    """The lines formatting changed, as "+14 −9 lines", or empty when none were counted."""
+    if not (result.lines_added or result.lines_removed):
+        return ""
+    return f"+{result.lines_added} −{result.lines_removed} lines"
+
+
 def format_presentation(label, result):
-    """Presentation for a `FormatResult`."""
+    """Presentation for a `FormatResult`: how much formatting changed, in its summary.
+
+    A reader wants to know whether formatting touched anything and how much, so
+    the summary counts files and changed lines. The formatted text and the file
+    list stay in the result a model reads; the activity repeats neither.
+    """
+    lines = _line_changes(result)
+    counted = f" ({lines})" if lines else ""
     changed = len(result.changed)
-    if result.source and not changed:
-        summary = "already formatted" if not result.changed else "reformatted"
-        return vis.ActivityPresentation(
-            label, summary, (vis.ActivityCode(_clip(result.source), result.language),)
-        )
+    files = changed + len(result.unchanged)
+    if not files:
+        if lines:
+            return vis.ActivityPresentation(label, f"reformatted{counted}")
+        said = "already formatted" if result.source else "nothing to format"
+        return vis.ActivityPresentation(label, said)
     if not changed:
-        summary = f"{_files(len(result.unchanged))} already formatted"
-        return vis.ActivityPresentation(label, summary)
-    verb = "rewritten" if result.is_written else "to reformat"
-    summary = f"{_files(changed)} {verb}"
-    rows = tuple(vis.ActivityText(path) for path in result.changed[:MAX_ROWS])
-    return vis.ActivityPresentation(label, summary, rows)
+        return vis.ActivityPresentation(label, f"{_files(files)} already formatted")
+    where = f"{changed} of {_files(files)}" if files > changed else _files(changed)
+    if result.is_written:
+        verb = "reformatted"
+    else:
+        verb = "needs formatting" if changed == 1 else "need formatting"
+    return vis.ActivityPresentation(label, f"{where} {verb}{counted}")
 
 
 def _findings(rows, directory=""):
@@ -198,17 +242,25 @@ def _test_counts(result):
 
 
 def _failure_section(failure):
-    """One failing test: where and why on one line, the whole message behind it."""
-    message = failure.message.strip()
-    lines = message.splitlines()
-    reason = lines[0] if lines else ""
+    """One failing test: where and why on one line, the details behind it.
+
+    The first line of the message is the reason and already sits in the
+    summary, so the section holds only what follows it, such as the expected
+    and actual values; a reason too long for the summary is shown whole.
+    """
+    message = textwrap.dedent(failure.message).strip()
+    reason, _, details = message.partition("\n")
     said = " · ".join(
-        part for part in (_location(failure.path, failure.line), reason) if part
+        part for part in (_location(failure.path, failure.line), reason.strip()) if part
     )
     summary = _line(said)
-    is_whole = len(lines) <= 1 and summary == _flat(said)
-    content = () if is_whole else (vis.ActivityCode(_clip(message)),)
-    headline = _line(failure.test) or _line(failure.path) or "Unnamed test"
+    if summary != _flat(said):
+        content = (vis.ActivityCode(_clip(message)),)
+    elif details.strip():
+        content = (vis.ActivityCode(_clip(textwrap.dedent(details))),)
+    else:
+        content = ()
+    headline = _tail(failure.test) or _line(failure.path) or "Unnamed test"
     return vis.ActivitySection(headline, summary or "no message", content)
 
 
@@ -263,19 +315,45 @@ def build_presentation(label, result):
     return vis.ActivityPresentation(label, summary, tuple(content))
 
 
+def _block(heading, text, language=None):
+    """`text` as code under its `heading`, or nothing when there is no text."""
+    if not text.strip():
+        return ()
+    return (vis.ActivityHeading(heading), vis.ActivityCode(_clip(text), language))
+
+
+def _repl_summary(result):
+    """How an evaluation ended, on one line: its error or value, and its time."""
+    took = _duration(result.duration_ms)
+    error = result.error.strip()
+    value = result.value.strip()
+    if error:
+        said = f"failed in {took} · {error.splitlines()[0]}"
+    elif value and "\n" not in value and len(value) <= 80:
+        said = f"returned {value} in {took}"
+    elif "\n" in value:
+        said = f"returned a {len(value.splitlines())}-line value in {took}"
+    elif value:
+        said = f"returned a value in {took}"
+    else:
+        said = f"finished in {took}"
+    return _line(said)
+
+
 def repl_presentation(label, result):
-    """Presentation for a `ReplResult`."""
-    if result.error:
-        return vis.ActivityPresentation(
-            label, "evaluation failed", (vis.ActivityText(_clip(result.error)),)
-        )
-    summary = f"{result.duration_ms} ms"
-    content = []
-    if result.output:
-        content.append(vis.ActivityText(_clip(result.output)))
-    if result.value:
-        content.append(vis.ActivityCode(_clip(result.value), result.language))
-    return vis.ActivityPresentation(label, summary, tuple(content))
+    """Presentation for a `ReplResult`, in the order a reader follows an evaluation.
+
+    The evaluated code comes first, then what it printed, its error and its
+    value, each under its own heading and only when there is something to show.
+    Code and value keep the pretty-printing the language extension gave them.
+    """
+    content = (
+        *_block("Code", result.code, result.language),
+        *_block("Output", result.output),
+        *_block("Error", result.error),
+        *_block("Value", result.value, result.language),
+    )
+    return vis.ActivityPresentation(label, _repl_summary(result), content)
 
 
 def session_presentation(label, session):
@@ -288,32 +366,68 @@ def session_presentation(label, session):
     return vis.ActivityPresentation(label, _line(f"{session.id} · {happened}"))
 
 
-def renderer(label, build):
+def code_argument(language):
+    """A `describe` callback showing the `code` argument of an evaluation call.
+
+    Pass it to `activity` for a REPL binding, so the running row and a failed
+    call still show the code the evaluation was given.
+
+    Args:
+        language: Language the code is written in, for highlighting.
+    """
+
+    def describe(args, kwargs):
+        code = kwargs.get("code")
+        if not isinstance(code, str):
+            code = next((arg for arg in args if isinstance(arg, str)), "")
+        return _block("Code", code, language)
+
+    return describe
+
+
+def renderer(label, build, *, describe=None):
     """A render callback showing `build(result)`, or the error when one is raised.
 
     Args:
         label: Headline for the binding, in capitalized English.
         build: Function turning the result into an `ActivityPresentation`.
+        describe: Optional function of the call's `args` and `kwargs` returning
+            blocks that show what the call was given; they appear while the call
+            runs and above the error when it fails.
 
     Returns:
         A callback for `vis.Activity(render=...)`.
     """
 
-    def render(*, phase, result=None, error=None, **_):
+    def given(args, kwargs):
+        if describe is None:
+            return ()
+        return tuple(describe(tuple(args or ()), dict(kwargs or {})))
+
+    def render(*, phase, args=(), kwargs=None, result=None, error=None, **_):
         if phase == "success" and result is not None:
             return build(result)
         if phase == "failure":
             detail = _clip(str(error), 1000) if error else "no detail"
-            return vis.ActivityPresentation(
-                label, "failed", (vis.ActivityText(detail),)
-            )
+            content = given(args, kwargs)
+            if content:
+                content += (vis.ActivityHeading("Error"), vis.ActivityCode(detail))
+            else:
+                content = (vis.ActivityText(detail),)
+            return vis.ActivityPresentation(label, "failed", content)
+        if phase == "start":
+            content = given(args, kwargs)
+            if content:
+                return vis.ActivityPresentation(label, "running", content)
         return None
 
     return render
 
 
-def activity(label, build, *, show_start=True):
-    """A complete `vis.Activity` for a language binding."""
+def activity(label, build, *, show_start=True, describe=None):
+    """A complete `vis.Activity` for a language binding; see `renderer`."""
     return vis.Activity(
-        label=label, render=renderer(label, build), show_start=show_start
+        label=label,
+        render=renderer(label, build, describe=describe),
+        show_start=show_start,
     )
