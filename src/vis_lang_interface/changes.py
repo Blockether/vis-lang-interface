@@ -30,13 +30,15 @@ _MOST_PAIRS = 1_000_000
 def line_changes(before: str, after: str) -> tuple[int, int]:
     """Lines `after` adds to and removes from `before`, as `(added, removed)`.
 
-    A changed line counts once in each, and a line counts with its newline, so a
-    last line that only gains or loses one counts as removed and added. The
-    counts are the smallest any line diff gives, the numbers `git diff --minimal
-    --numstat` reports. A changed region too large to count exactly in about half
-    a second, tens of thousands of lines, is matched through the lines that
-    repeat least, as patience and histogram diffs do; its counts may then exceed
-    the fewest, never fall below them.
+    A changed line counts once in each. A line counts with its newline, so a last line
+    that only gains or loses a newline counts as removed and added. The counts are the
+    smallest that any line diff gives, which are the numbers that `git diff --minimal
+    --numstat` reports.
+
+    Some changed regions are too large to count exactly in about half a second, such as
+    tens of thousands of lines. Such a region is matched through the lines that repeat
+    least, as patience and histogram diffs do. Its counts can then be more than the
+    smallest, but never less.
     """
     if before == after:
         return 0, 0
@@ -46,7 +48,7 @@ def line_changes(before: str, after: str) -> tuple[int, int]:
 
 
 def _lines(text):
-    """The lines of `text`; a last line without a newline stays a 1-tuple.
+    """The lines of `text`. A last line without a newline stays a 1-tuple.
 
     `str.split` breaks only at newlines, unlike `str.splitlines`, so a carriage
     return or form feed stays part of its line, as in git.
@@ -72,9 +74,9 @@ def _kept(old, new):
 def _reduced(old, new):
     """`old` and `new` less every line a longest common subsequence settles alone.
 
-    Lines shared at both ends are kept, and a line only one side holds is not;
-    dropping those often exposes more shared ends. Returns both remainders and
-    the number of lines kept at the ends.
+    Lines shared at both ends are kept, and a line that only one side holds is not.
+    Dropping those lines often exposes more shared ends. Returns both remainders and the
+    number of lines kept at the ends.
     """
     old, new, kept = _without_shared_ends(old, new)
     if not old or not new:
@@ -125,9 +127,9 @@ def _steps(old, new):
 def _exact(old, new, budget):
     """Longest common subsequence length within `budget` steps, or None.
 
-    Myers' search goes first while the lengths allow few differences, since it
-    settles scattered changes in a long file at once; bit-parallel rows take
-    over when it runs long, because their cost does not grow with the changes.
+    Myers' search goes first while the lengths allow few differences. It settles
+    scattered changes in a long file at once. When it runs long, bit-parallel rows take
+    over, because their cost does not grow with the changes.
     """
     steps = _steps(old, new)
     most = min(steps, budget) // 2
@@ -176,11 +178,11 @@ def _myers(old, new, budget):
 def _bit_parallel(old, new):
     """Common subsequence length by bit-parallel rows (Hyyrö 2004), or None.
 
-    One integer holds a bit per line of the longer side, and each line of the
-    shorter side updates it with four big-integer operations, so Python loops
-    once per line while the carries run in C: O(N·M/w), whatever the changes. A
-    line met once keeps its position and becomes a mask only when used, so the
-    masks stay small unless many lines repeat; past `_MOST_MASK_BITS` it gives up.
+    One integer holds a bit per line of the longer side. Each line of the shorter side
+    updates it with four big-integer operations. So Python loops once per line while the
+    carries run in C, in O(N·M/w) whatever the changes. A line met once keeps its
+    position and becomes a mask only when used. So the masks stay small unless many
+    lines repeat. Past `_MOST_MASK_BITS`, it gives up.
     """
     if len(old) > len(new):
         old, new = new, old
@@ -211,10 +213,10 @@ def _bit_parallel(old, new):
 def _anchored(old, new):
     """A common subsequence length through lines each side holds once.
 
-    Patience diff anchors the same way: those lines, in the longest run that
-    keeps their order, split both sides into gaps counted exactly while the
-    budget lasts. A gap past it follows only the lines that repeat least, so
-    the length stays that of a real common subsequence.
+    Patience diff anchors the same way. Those lines, in the longest run that keeps their
+    order, split both sides into gaps. The gaps are counted exactly while the budget
+    lasts. A gap past the budget follows only the lines that repeat least. So the length
+    stays that of a real common subsequence.
     """
     counts_old, counts_new = Counter(old), Counter(new)
     where = {line: j for j, line in enumerate(new) if counts_new[line] == 1}
@@ -259,10 +261,10 @@ def _anchored(old, new):
 def _sparse(old, new, most):
     """A common subsequence length through the lines that repeat least.
 
-    Hunt and Szymanski's count follows every pair of equal lines, in time
-    O(P log N) for P pairs, so it takes the lines with the fewest pairs while
-    their total stays within `most`. Leaving the others out keeps it a real
-    common subsequence. Returns its length and the pairs it followed.
+    Hunt and Szymanski's count follows every pair of equal lines, in time O(P log N) for
+    P pairs. So it takes the lines with the fewest pairs while their total stays within
+    `most`. Leaving the others out keeps it a real common subsequence. Returns its
+    length and the pairs it followed.
     """
     counts_old, counts_new = Counter(old), Counter(new)
     shared = sorted(

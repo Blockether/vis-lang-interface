@@ -1,15 +1,15 @@
 """The routing block a language extension puts in the system prompt.
 
-Vis prints one section per active extension into the system prompt, and an
-extension that contributes none is a surface the model has to rediscover before
-it uses it: it shells the toolchain out by hand, and it never asks whether the
-REPL this session started is still alive. Nothing else says so — Vis keeps live
-resources out of the turn context on purpose — so this block is what makes a
-runtime that outlives the call worth starting at all.
+Vis prints one section per active extension into the system prompt. The model must
+rediscover an extension that contributes no section before it uses it. It then runs the
+toolchain by hand in a shell, and it never asks whether the REPL that this session
+started is still alive. Nothing else says so, because Vis keeps live resources out of
+the turn context on purpose. So this block is what makes a runtime that outlives the
+call worth starting at all.
 
-The text lives here rather than in each extension so every language reads the
-same way: the alias and its verbs first, then what to reach for instead of a
-shell line, then whatever is true only of that language.
+The text lives here, not in each extension, so that every language reads the same way.
+The alias and its verbs come first. Then comes what to use instead of a shell line, and
+then whatever is true only of that language.
 
     from vis_lang_interface import prompt
 
@@ -47,14 +47,14 @@ def routing(language, alias, verbs=VERBS, *, notes=()):
     """The block this extension contributes to the system prompt.
 
     Args:
-        language: The language as a person names it, e.g. `"Clojure"`.
+        language: The language as a person names it, such as `"Clojure"`.
         alias: The extension's alias, which is also the symbol the verbs hang
-            off in the sandbox, e.g. `"clj"` for `clj.run_tests`.
-        verbs: The verbs this extension serves, named as in `VERBS`; they are
-            listed in that order whatever order they arrive in.
-        notes: Extra lines for what is true of this language alone — a verb
-            that needs a live REPL, a lint that also reports reflection. Each
-            one is a sentence of routing or policy, never a signature: the
+            off in the sandbox, such as `"clj"` for `clj.run_tests`.
+        verbs: The verbs this extension serves, named as in `VERBS`. They are
+            listed in that order, whatever order they arrive in.
+        notes: Extra lines for what is true only of this language. Examples are
+            a verb that needs a live REPL and a lint that also reports reflection.
+            Each one is a sentence of routing or policy, never a signature. The
             method's own docstring already carries its arguments and result.
 
     Returns:

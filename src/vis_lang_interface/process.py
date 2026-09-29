@@ -1,18 +1,17 @@
 """Running a language toolchain as a child process.
 
-Everything a language extension starts goes through `vis.jailed_shell`, so
-whatever confinement the person running Vis turned on covers the toolchain as
-much as the model's own shell. A jailed toolchain still reaches the package
-indexes it needs: Maven, Clojars and PyPI answer through the egress proxy.
+Everything a language extension starts goes through `vis.jailed_shell`. So the
+confinement that the person running Vis turned on covers the toolchain as much as the
+model's own shell. A jailed toolchain still reaches the package indexes it needs. Maven,
+Clojars and PyPI answer through the egress proxy.
 
 These helpers stay deliberately narrow: one command, one timeout, captured
 output, and an error that names the missing program instead of a bare exit code.
 
-A shell child runs under a pty, with stdout and stderr merged into one
-normalized stream. Tool output is data — JSON from ruff, EDN from clj-kondo — so
-nothing here reads that stream: the command writes its own streams into a
-private run directory granted to that one child, and the files are read back
-when it is done.
+A shell child runs under a pty, with stdout and stderr merged into one normalized
+stream. Tool output is data, such as JSON from ruff and EDN from clj-kondo. So nothing
+here reads that stream. The command writes its own streams into a private run directory
+granted to that one child. The files are read back when it is done.
 """
 
 from __future__ import annotations
@@ -89,11 +88,13 @@ def is_hosted():
 def shell_call():
     """The shell this process starts children with.
 
-    Inside Vis that is `vis.jailed_shell` and nothing else: a refusal from it is
-    the jail saying no, and retrying the same command unconfined would be
-    exactly the escape the jail exists to prevent. Outside a Vis process — this
-    repository's own test run, or an extension driven by hand — there is no host
-    to enforce a jail and no session to confine to, so the local shell runs it.
+    Inside Vis, that is `vis.jailed_shell` and nothing else. A refusal from it is the
+    jail saying no. Retrying the same command without confinement would be exactly the
+    escape that the jail exists to prevent.
+
+    Outside a Vis process, there is no host to enforce a jail and no session to confine
+    to. Examples are this repository's own test run and an extension driven by hand.
+    There, the local shell runs the command.
 
     Returns:
         The callable that takes one shell options map.
@@ -106,10 +107,10 @@ def spawn(command, *, cwd=None, env=None, timeout_s=None, read_write=()):
 
     Args:
         command: The shell line to run.
-        cwd: Directory to run in; the current directory when omitted.
+        cwd: Directory to run in, or the current directory when omitted.
         timeout_s: Seconds this call waits before answering. The child is not
-            killed when the wait ends: it keeps running under the handle's id.
-        env: Variables for this child, over the ones it inherits; a name mapped
+            killed when the wait ends. It keeps running under the handle's id.
+        env: Variables for this child, over the ones it inherits. A name mapped
             to None is unset.
         read_write: Paths outside the session's own roots this child may read
             and write, such as the directory holding its rendezvous.
@@ -148,10 +149,10 @@ def run(command, *, cwd=None, timeout_s=300, stdin=None, env=None, read_write=()
 
     Args:
         command: Program and arguments.
-        cwd: Directory to run in; the current directory when omitted.
+        cwd: Directory to run in, or the current directory when omitted.
         timeout_s: Seconds to wait before giving up.
         stdin: Text to write to the process, or None.
-        env: Variables for this run, over the ones it inherits; a name mapped to
+        env: Variables for this run, over the ones it inherits. A name mapped to
             None is unset.
         read_write: Paths outside the session's own roots this run may read and
             write, such as the dependency cache its toolchain fills. The private

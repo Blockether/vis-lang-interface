@@ -1,19 +1,20 @@
 """A language runtime that outlives the call that started it.
 
-`vis-lang-python` keeps one interpreter holding the REPL's globals;
-`vis-lang-clojure` keeps one JVM owning every nREPL it started. Both speak the
-same shape of protocol with their runtime: one JSON request per line in, one
-JSON answer per line out.
+`vis-lang-python` keeps one interpreter that holds the REPL's globals.
+`vis-lang-clojure` keeps one JVM that owns every nREPL it started. Both speak the same
+shape of protocol with their runtime: one JSON request per line in, one JSON answer per
+line out.
 
-Those two lines cannot be the child's own stdin and stdout any more. Everything
-a language extension starts goes through `vis.jailed_shell`, and a shell child
-runs under a pty that merges stdout with stderr and normalizes what passes
-through — a framed protocol does not survive that. So the extension arranges a
-rendezvous instead: a private directory holding two FIFOs, handed to that one
-child as its stdin and stdout and granted to it by name. The child keeps reading
-lines from stdin and writing lines to stdout, exactly as before; the pty log
-keeps whatever the runtime says about itself, which is what a failed start hands
-back.
+Those two lines cannot be the child's own stdin and stdout any more. Everything a
+language extension starts goes through `vis.jailed_shell`. A shell child runs under a
+pty that merges stdout with stderr and normalizes what passes through. A framed protocol
+does not survive that.
+
+So the extension arranges a rendezvous instead. This is a private directory that holds
+two FIFOs. They are given to that one child as its stdin and stdout and granted to it by
+name. The child keeps reading lines from stdin and writing lines to stdout, exactly as
+before. The pty log keeps whatever the runtime says about itself, and a failed start
+gives back that log.
 
 Closing the request FIFO is what ends a runtime, so an extension that goes away
 never leaves an interpreter behind.
@@ -59,12 +60,11 @@ class RuntimeGone(RuntimeError):
 class Rendezvous:
     """The private FIFO pair a runtime reads its requests and writes its answers on.
 
-    Both FIFOs are opened here before the child arrives, so neither side ever
-    waits for the other to show up. The request end is held read-write, which is
-    what makes opening it return at once and makes dropping it the EOF the
-    runtime shuts down on. The answer end is read without blocking, so closing
-    this rendezvous is never a race against a reader stuck in the middle of a
-    line.
+    Both FIFOs are opened here before the child arrives, so neither side ever waits for
+    the other. The request end is held read-write. That makes opening it return at once,
+    and dropping it gives the EOF that makes the runtime shut down. The answer end is
+    read without blocking. So closing this rendezvous never races a reader that is stuck
+    in the middle of a line.
     """
 
     def __init__(self, name="runtime"):
@@ -90,8 +90,8 @@ class Rendezvous:
     def place(self, name, text):
         """Put a file of the runtime's own next to its FIFOs.
 
-        A runtime started from a source file — a driver, a script — is handed
-        that file here rather than on a command line the shell would have to
+        A runtime started from a source file, such as a driver or a script, gets that
+        file here. It does not get it on a command line that the shell would have to
         carry intact.
 
         Args:
@@ -253,8 +253,8 @@ class Runtime:
     def stop(self):
         """End the runtime, and with it everything it owns.
 
-        Closing the rendezvous is the EOF it shuts down on; the shell it runs
-        under is stopped afterwards, so a runtime that ignores EOF still goes.
+        Closing the rendezvous gives the EOF that makes the runtime shut down. Then the
+        shell that it runs under is stopped, so a runtime that ignores EOF still stops.
         """
         self._meeting.closing.set()
         self._thread.join(_LIVENESS_MAX_S)
@@ -294,15 +294,15 @@ class Runtime:
 def start(command, *, cwd=None, env=None, read_write=(), name="runtime", meeting=None):
     """Start `command` as a confined runtime listening on its own rendezvous.
 
-    The child is spawned through the workspace jail with its stdin and stdout
-    already wired to the rendezvous, and the rendezvous directory is granted to
-    it by name. `VIS_LANG_RENDEZVOUS` names that directory for a runtime that
-    wants to know where it is.
+    The child is spawned through the workspace jail, with its stdin and stdout already
+    wired to the rendezvous. The rendezvous directory is granted to it by name.
+    `VIS_LANG_RENDEZVOUS` names that directory for a runtime that wants to know where it
+    is.
 
     Args:
         command: Program and arguments for the runtime.
         cwd: Directory the runtime runs in.
-        env: Variables for it, over the ones it inherits; None unsets a name.
+        env: Variables for it, over the ones it inherits. None unsets a name.
         read_write: Further paths outside the session's roots it may use.
         name: What this runtime is, used in the rendezvous directory's name.
         meeting: A rendezvous already opened and filled by the caller, for a
