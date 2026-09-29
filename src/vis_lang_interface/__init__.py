@@ -1,13 +1,13 @@
 """The contract a Vis language extension answers with.
 
-Vis knows nothing about programming languages. A language extension runs that language's
-own toolchain, such as cljfmt and clj-kondo through the Clojure CLI, or ruff and pytest
-for Python. It gives the results back to the model in this package's shapes. So one
-presentation renders them all, and a model that learned one extension already knows the
-next.
+Vis knows nothing about programming languages. A language extension runs that
+language's own toolchain, such as cljfmt and clj-kondo through the Clojure CLI,
+or ruff and pytest for Python. It gives the results back to the model in this
+package's shapes. So one presentation renders them all, and a model that learned
+one extension already knows the next.
 
-Every process that an extension starts goes through the workspace jail. This includes
-one run of a formatter and a runtime that stays alive between calls.
+Every process that an extension starts goes through the workspace jail. This
+includes one run of a formatter and a runtime that stays alive between calls.
 
 Import what you need:
 

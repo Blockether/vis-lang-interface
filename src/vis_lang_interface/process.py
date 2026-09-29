@@ -1,17 +1,18 @@
 """Running a language toolchain as a child process.
 
 Everything a language extension starts goes through `vis.jailed_shell`. So the
-confinement that the person running Vis turned on covers the toolchain as much as the
-model's own shell. A jailed toolchain still reaches the package indexes it needs. Maven,
-Clojars and PyPI answer through the egress proxy.
+confinement that the person running Vis turned on covers the toolchain as much
+as the model's own shell. A jailed toolchain still reaches the package indexes
+it needs. Maven, Clojars and PyPI answer through the egress proxy.
 
 These helpers stay deliberately narrow: one command, one timeout, captured
 output, and an error that names the missing program instead of a bare exit code.
 
-A shell child runs under a pty, with stdout and stderr merged into one normalized
-stream. Tool output is data, such as JSON from ruff and EDN from clj-kondo. So nothing
-here reads that stream. The command writes its own streams into a private run directory
-granted to that one child. The files are read back when it is done.
+A shell child runs under a pty, with stdout and stderr merged into one
+normalized stream. Tool output is data, such as JSON from ruff and EDN from
+clj-kondo. So nothing here reads that stream. The command writes its own streams
+into a private run directory granted to that one child. The files are read back
+when it is done.
 """
 
 from __future__ import annotations
@@ -88,13 +89,13 @@ def is_hosted():
 def shell_call():
     """The shell this process starts children with.
 
-    Inside Vis, that is `vis.jailed_shell` and nothing else. A refusal from it is the
-    jail saying no. Retrying the same command without confinement would be exactly the
-    escape that the jail exists to prevent.
+    Inside Vis, that is `vis.jailed_shell` and nothing else. A refusal from it
+    is the jail saying no. Retrying the same command without confinement would
+    be exactly the escape that the jail exists to prevent.
 
-    Outside a Vis process, there is no host to enforce a jail and no session to confine
-    to. Examples are this repository's own test run and an extension driven by hand.
-    There, the local shell runs the command.
+    Outside a Vis process, there is no host to enforce a jail and no session to
+    confine to. Examples are this repository's own test run and an extension
+    driven by hand. There, the local shell runs the command.
 
     Returns:
         The callable that takes one shell options map.

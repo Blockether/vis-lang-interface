@@ -1,10 +1,11 @@
 """How language results appear in the activity view.
 
-Every language extension shows the same thing for the same kind of work. It shows a
-capitalized headline that names the task and a summary that a reader can act on. It also
-shows the findings, grouped where a reader looks for them. Lint findings are grouped by
-directory, and a test run by failing test. Nothing below a summary repeats it. Build a
-render callback with `renderer` and give it to `vis.Activity`.
+Every language extension shows the same thing for the same kind of work. It
+shows a capitalized headline that names the task and a summary that a reader can
+act on. It also shows the findings, grouped where a reader looks for them. Lint
+findings are grouped by directory, and a test run by failing test. Nothing below
+a summary repeats it. Build a render callback with `renderer` and give it to
+`vis.Activity`.
 """
 
 from __future__ import annotations
@@ -101,8 +102,8 @@ def _line(text, limit=MAX_LINE):
 def _tail(text, limit=MAX_LINE):
     """`text` as one line that keeps its end, marked at the front when cut.
 
-    A nested test name ends with its own case, which sets it apart from its siblings. So
-    a long name loses its outer descriptions first.
+    A nested test name ends with its own case, which sets it apart from its
+    siblings. So a long name loses its outer descriptions first.
     """
     line = _flat(text)
     if len(line) > limit:
@@ -138,9 +139,9 @@ def _line_changes(result):
 def format_presentation(label, result):
     """Presentation for a `FormatResult`: how much formatting changed, in its summary.
 
-    A reader wants to know whether formatting touched anything and how much, so the
-    summary counts files and changed lines. The formatted text and the file list stay in
-    the result that a model reads. The activity repeats neither.
+    A reader wants to know whether formatting touched anything and how much, so
+    the summary counts files and changed lines. The formatted text and the file
+    list stay in the result that a model reads. The activity repeats neither.
     """
     lines = _line_changes(result)
     counted = f" ({lines})" if lines else ""
@@ -244,9 +245,9 @@ def _test_counts(result):
 def _failure_section(failure):
     """One failing test: where and why on one line, the details behind it.
 
-    The first line of the message is the reason, and it already sits in the summary. So
-    the section holds only what follows it, such as the expected and actual values. A
-    reason too long for the summary is shown whole.
+    The first line of the message is the reason, and it already sits in the
+    summary. So the section holds only what follows it, such as the expected and
+    actual values. A reason too long for the summary is shown whole.
     """
     message = textwrap.dedent(failure.message).strip()
     reason, _, details = message.partition("\n")
@@ -267,8 +268,8 @@ def _failure_section(failure):
 def test_presentation(label, result):
     """Presentation for a `TestResult`, one section per failing test.
 
-    A passing run's own output only repeats its counts. So the output appears only for a
-    failed run that named no failing test, where it is the evidence.
+    A passing run's own output only repeats its counts. So the output appears
+    only for a failed run that named no failing test, where it is the evidence.
     """
     summary = f"{_test_counts(result)} in {result.duration_ms / 1000:.1f} s"
     shown = result.failures[:MAX_SECTIONS]
@@ -343,9 +344,10 @@ def _repl_summary(result):
 def repl_presentation(label, result):
     """Presentation for a `ReplResult`, in the order a reader follows an evaluation.
 
-    The evaluated code comes first, then what it printed, its error and its value. Each
-    appears under its own heading, and only when there is something to show. Code and
-    value keep the pretty-printing that the language extension gave them.
+    The evaluated code comes first, then what it printed, its error and its
+    value. Each appears under its own heading, and only when there is something
+    to show. Code and value keep the pretty-printing that the language extension
+    gave them.
     """
     content = (
         *_block("Code", result.code, result.language),
@@ -359,8 +361,8 @@ def repl_presentation(label, result):
 def session_presentation(label, session):
     """Presentation for a `ReplSession`: the REPL and what happened, on one line.
 
-    The detail already says what happened, so it is the summary, not a preview that
-    repeats it. A session without a detail reads as its state.
+    The detail already says what happened, so it is the summary, not a preview
+    that repeats it. A session without a detail reads as its state.
     """
     happened = session.detail or ("running" if session.is_running else "not running")
     return vis.ActivityPresentation(label, _line(f"{session.id} · {happened}"))
@@ -391,9 +393,9 @@ def renderer(label, build, *, describe=None):
     Args:
         label: Headline for the binding, in capitalized English.
         build: Function turning the result into an `ActivityPresentation`.
-        describe: Optional function of the call's `args` and `kwargs`. It returns
-            blocks that show what the call was given. They appear while the call
-            runs, and above the error when it fails.
+        describe: Optional function of the call's `args` and `kwargs`. It
+            returns blocks that show what the call was given. They appear while
+            the call runs, and above the error when it fails.
 
     Returns:
         A callback for `vis.Activity(render=...)`.

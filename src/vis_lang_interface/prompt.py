@@ -1,15 +1,15 @@
 """The routing block a language extension puts in the system prompt.
 
-Vis prints one section per active extension into the system prompt. The model must
-rediscover an extension that contributes no section before it uses it. It then runs the
-toolchain by hand in a shell, and it never asks whether the REPL that this session
-started is still alive. Nothing else says so, because Vis keeps live resources out of
-the turn context on purpose. So this block is what makes a runtime that outlives the
-call worth starting at all.
+Vis prints one section per active extension into the system prompt. The model
+must rediscover an extension that contributes no section before it uses it. It
+then runs the toolchain by hand in a shell, and it never asks whether the REPL
+that this session started is still alive. Nothing else says so, because Vis
+keeps live resources out of the turn context on purpose. So this block is what
+makes a runtime that outlives the call worth starting at all.
 
-The text lives here, not in each extension, so that every language reads the same way.
-The alias and its verbs come first. Then comes what to use instead of a shell line, and
-then whatever is true only of that language.
+The text lives here, not in each extension, so that every language reads the
+same way. The alias and its verbs come first. Then comes what to use instead of
+a shell line, and then whatever is true only of that language.
 
     from vis_lang_interface import prompt
 
@@ -53,9 +53,10 @@ def routing(language, alias, verbs=VERBS, *, notes=()):
         verbs: The verbs this extension serves, named as in `VERBS`. They are
             listed in that order, whatever order they arrive in.
         notes: Extra lines for what is true only of this language. Examples are
-            a verb that needs a live REPL and a lint that also reports reflection.
-            Each one is a sentence of routing or policy, never a signature. The
-            method's own docstring already carries its arguments and result.
+            a verb that needs a live REPL and a lint that also reports
+            reflection. Each one is a sentence of routing or policy, never a
+            signature. The method's own docstring already carries its arguments
+            and result.
 
     Returns:
         The block, as text.
