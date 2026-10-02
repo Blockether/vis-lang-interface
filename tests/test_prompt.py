@@ -20,6 +20,11 @@ def test_verbs_are_listed_in_contract_order_whatever_order_they_arrive_in():
     assert block.splitlines()[2] == "  py.repl_start · py.repl_eval"
 
 
+def test_a_syntax_check_is_a_toolchain_verb_listed_after_lint():
+    block = prompt.routing("Clojure", "clj", ("run_tests", "check_syntax", "lint_code"))
+    assert block.splitlines()[1] == "  clj.lint_code · clj.check_syntax · clj.run_tests"
+
+
 def test_a_toolchain_verb_routes_away_from_a_shell_line():
     block = prompt.routing("Python", "py", ("run_tests",))
     assert "instead of a shell line" in block
