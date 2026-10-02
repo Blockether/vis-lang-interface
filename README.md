@@ -28,12 +28,13 @@ def lint(paths):
 
 | Module | What it gives you |
 | --- | --- |
-| `vis_lang_interface.results` | `Diagnostic`, `FormatResult`, `LintResult`, `TestResult`, `TestFailure`, `BuildResult`, `BuildArtifact`, `ReplResult`, `ReplSession` |
+| `vis_lang_interface.results` | `Diagnostic`, `FormatResult`, `LintResult`, `SyntaxResult`, `TestResult`, `TestFailure`, `BuildResult`, `BuildArtifact`, `ReplResult`, `ReplSession` |
 | `vis_lang_interface.changes` | `line_changes` — the lines an edit added and removed, as `git diff --minimal --numstat` counts them |
 | `vis_lang_interface.process` | `run`, `spawn`, `tool_path`, `ToolRun`, `ToolMissing`, `ToolTimeout` |
 | `vis_lang_interface.runtime` | `start`, `Runtime`, `Rendezvous`, `RuntimeGone` — a runtime that stays alive between calls |
 | `vis_lang_interface.project` | `project_root`, `source_files` |
-| `vis_lang_interface.presentation` | Activity rendering every language binding shares: a pass or fail verdict for lint and test runs, changed-line counts for formatting, and an evaluation's code, output, error and value |
+| `vis_lang_interface.presentation` | Activity rendering every language binding shares: a pass or fail verdict for lint, syntax and test runs, changed-line counts for formatting, and an evaluation's code, output, error and value |
+| `vis_lang_interface.syntax` | `SyntaxGuard` — refuses a patch that makes a file unparseable and reports Python writes that did |
 | `vis_lang_interface.prompt` | `routing` — the block that tells the model your verbs exist |
 
 ## Count what formatting changed
@@ -78,6 +79,43 @@ vis.register_extension(vis.Extension(..., alias="py", prompt=PROMPT))
 
 Keep `notes` to routing and policy — when a verb is the right approach and what it refuses. Each
 method's own docstring already carries its arguments and its result.
+
+## Keep source files parseable
+
+`SyntaxGuard` asks the language's own parser whether the files the model changes still parse. The
+interface has no parser: give the guard the file suffixes your parser reads and a `check` function.
+`check` takes `{path: text}` and the workspace root and returns a `SyntaxResult` whose diagnostics
+name the paths it was given.
+
+```python
+from vis_lang_interface import Diagnostic, SyntaxResult
+from vis_lang_interface.syntax import SyntaxGuard
+
+def check(sources, root):
+    rows = [Diagnostic(path, line, column, "error", message) for ... in parse(sources)]
+    return SyntaxResult.of("clojure", rows, files=len(sources))
+
+guard = SyntaxGuard("clojure", (".clj", ".cljs", ".cljc", ".edn"), check)
+
+vis.register_extension(vis.Extension(..., op_hooks=guard.op_hooks(), ctx=guard.ctx))
+```
+
+- Before a `patch` writes, Vis gives the hook the file as the patch would leave it. A patch that
+  would make a parseable file unparseable is refused, and nothing is written. A file that did not
+  parse before is not guarded, so a repair can take several steps.
+- After a `patch`, and after every `python_execution` block, the guard parses the changed files
+  again. This covers `Path.write_text()`, `open(..., "w")` and the programs a block ran. Files that
+  still do not parse reach the model's next request as `session["clojure_syntax_errors"]`.
+- `patch` is atomic for one file, and the guard judges each call on its own. A block that patches
+  several files keeps the patches that passed when a later one is refused.
+- The guard watches the files under the workspace root that git lists, tracked or untracked but not
+  ignored. Where git cannot list the tree, it walks it and skips hidden and build directories.
+  Between listings, file and directory stat calls find what changed, so a block pays no process.
+- When the parser cannot answer because its toolchain is missing, slow or failing, the guard allows
+  the operation, logs why and does not ask again for two minutes.
+
+A Vis host that predates the patch preview gives the before hook nothing to judge. There, the guard
+only reports a broken file after the write.
 
 ## Everything a language tool starts runs in the jail
 

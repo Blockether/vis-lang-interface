@@ -11,6 +11,7 @@ from vis_lang_interface import (
     LintResult,
     ReplResult,
     ReplSession,
+    SyntaxResult,
     TestFailure,
     TestResult,
     presentation,
@@ -27,6 +28,29 @@ def test_clean_lint_summarizes_the_file_count():
         "Lint Clojure code", LintResult.of("clojure", [])
     )
     assert uncounted.summary == "no findings"
+
+
+def test_syntax_presentation_counts_clean_files_and_shows_each_error():
+    clean = presentation.syntax_presentation(
+        "Check Clojure syntax", SyntaxResult.of("clojure", [], files=3)
+    )
+    assert clean.summary == "no syntax errors in 3 files"
+    assert clean.content == ()
+    broken = presentation.syntax_presentation(
+        "Check Clojure syntax",
+        SyntaxResult.of(
+            "clojure",
+            [Diagnostic("src/a.clj", 4, 1, "error", "EOF while reading")],
+            files=3,
+        ),
+    )
+    assert broken.summary == "1 error in 1 of 3 files"
+    assert broken.content[0].rows[0] == (
+        "src/a.clj:4",
+        "error",
+        "",
+        "EOF while reading",
+    )
 
 
 def test_lint_findings_in_one_directory_form_one_table():

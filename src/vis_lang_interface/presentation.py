@@ -231,6 +231,18 @@ def lint_presentation(label, result):
     return _checks(label, summary, content, sections, is_passed=False)
 
 
+def syntax_presentation(label, result):
+    """Presentation for a `SyntaxResult`: the sources that do not parse, by directory.
+
+    Each source that does not parse shows the first error its parser reported,
+    grouped like lint findings. A clean verdict counts the files the parser read.
+    """
+    if result.is_clean:
+        checked = f" in {_files(result.files)}" if result.files else ""
+        return _checks(label, f"no syntax errors{checked}", (), is_passed=True)
+    return lint_presentation(label, result)
+
+
 def _test_counts(result):
     """The run's non-zero counts, failures first as runners print them."""
     counts = (

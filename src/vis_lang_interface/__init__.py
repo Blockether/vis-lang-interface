@@ -18,6 +18,7 @@ Import what you need:
 * `project` — finding the project directory and its source files.
 * `presentation` — the Activity rendering the results share.
 * `prompt` — the routing block the extension puts in the system prompt.
+* `syntax` — refusing a patch that breaks parsing, and reporting writes that did.
 """
 
 from vis_lang_interface.changes import line_changes
@@ -38,6 +39,7 @@ from vis_lang_interface.results import (
     LintResult,
     ReplResult,
     ReplSession,
+    SyntaxResult,
     TestFailure,
     TestResult,
 )
@@ -54,6 +56,7 @@ __all__ = [
     "ReplSession",
     "Runtime",
     "RuntimeGone",
+    "SyntaxResult",
     "TestFailure",
     "TestResult",
     "ToolMissing",

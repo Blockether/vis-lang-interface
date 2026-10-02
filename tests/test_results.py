@@ -7,6 +7,7 @@ from vis_lang_interface import (
     BuildResult,
     Diagnostic,
     LintResult,
+    SyntaxResult,
     TestFailure,
     TestResult,
 )
@@ -84,3 +85,15 @@ def test_failed_build_keeps_no_artifacts():
     result = BuildResult.of("python", "sdist", duration_ms=10, is_built=False)
     assert result.is_built is False
     assert result.artifacts == ()
+
+
+def test_syntax_result_is_clean_only_without_diagnostics():
+    clean = SyntaxResult.of("clojure", [], files=4)
+    broken = SyntaxResult.of(
+        "clojure",
+        [Diagnostic("src/a.clj", 3, 7, "error", "Unmatched delimiter: )")],
+        files=4,
+    )
+    assert (clean.is_clean, clean.files, clean.diagnostics) == (True, 4, ())
+    assert broken.is_clean is False
+    assert broken.diagnostics[0].path == "src/a.clj"

@@ -68,6 +68,25 @@ class LintResult:
 
 
 @dataclass(frozen=True)
+class SyntaxResult:
+    """The verdict of the language's own parser: which sources do not parse, and where."""
+
+    language: Annotated[str, "Language whose parser read the sources."]
+    files: Annotated[int, "Number of files or source strings the parser read."]
+    diagnostics: Annotated[
+        tuple[Diagnostic, ...],
+        "The first error in each source that does not parse, in file order.",
+    ]
+    is_clean: Annotated[bool, "Whether every source parsed."]
+
+    @classmethod
+    def of(cls, language, diagnostics, files=0):
+        """A result that is clean exactly when no source failed to parse."""
+        rows = tuple(diagnostics)
+        return cls(language, int(files), rows, not rows)
+
+
+@dataclass(frozen=True)
 class TestFailure:
     """One failing test, located where the runner reported it."""
 
