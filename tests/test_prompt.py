@@ -29,15 +29,15 @@ def test_syntax_checks_are_private_hooks_not_public_toolchain_verbs():
 
 def test_a_toolchain_verb_routes_away_from_a_shell_line():
     block = prompt.routing("Python", "py", ("run_tests",))
-    assert "instead of a shell line" in block
+    assert "not a shell command" in block
     assert "repl_status" not in block
 
 
 def test_a_repl_verb_says_a_live_runtime_is_reported_nowhere_else():
     block = prompt.routing("Clojure", "clj", ("repl_start", "repl_status", "repl_stop"))
-    assert "nothing reprints that it is alive" in block
-    assert "`clj.repl_status` is what says so" in block
-    assert "instead of a shell line" not in block
+    assert "nothing in the context" in block
+    assert "`clj.repl_status` tells you" in block
+    assert "not a shell command" not in block
 
 
 def test_notes_are_appended_as_their_own_lines():

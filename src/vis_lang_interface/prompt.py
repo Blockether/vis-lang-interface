@@ -79,16 +79,14 @@ def routing(language, alias, verbs=VERBS, *, notes=()):
     lines.extend(f"  {' · '.join(row)}" for row in (toolchain, repl) if row)
     if toolchain:
         lines.append(
-            f"These verbs are the {language} toolchain here: reach for them instead of a shell"
-            " line that runs the formatter, the linter or the test command, and read the typed"
-            " result they answer rather than parsing output."
+            f"Use these verbs, not a shell command, to format, lint and test {language}."
+            " Read their typed result; do not parse output."
         )
     if repl:
         lines.append(
-            "A REPL outlives the call that started it and nothing reprints that it is alive:"
-            f" `{alias}.repl_status` is what says so, `{alias}.repl_stop` is what ends it."
-            " Evaluating in a live one is how you check a change without paying the"
-            " toolchain's startup again."
+            "A REPL stays alive after the call that started it, and nothing in the context"
+            f" shows that it is alive. `{alias}.repl_status` tells you; `{alias}.repl_stop` ends"
+            " it. Evaluate in a live REPL to check a change without a new toolchain startup."
         )
     lines.extend(text for text in (str(note).strip() for note in notes) if text)
     return "\n".join(lines)
