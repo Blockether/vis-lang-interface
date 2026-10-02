@@ -1,6 +1,7 @@
 """Keeping a language's files parseable while the model edits them.
 
-A language extension can ask its own parser whether a source parses.
+A language extension supplies a private callback to its own parser. Syntax
+checking is a hook capability, never a symbol exposed to `python_execution`.
 `SyntaxGuard` asks that question at the points where Vis changes files:
 
 * Before a `patch` writes, Vis shows the hook the file as the patch would
@@ -21,13 +22,14 @@ from __future__ import annotations
 import os
 import threading
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 import blockether.vis.extension as vis
 
 from vis_lang_interface import process
 from vis_lang_interface.project import IGNORED_DIRECTORIES
+from vis_lang_interface.results import SyntaxResult
 
 # A tree is listed again at most this often; stat calls keep it current between listings.
 REFRESH_S = 300.0
@@ -45,9 +47,9 @@ class SyntaxGuard:
     Args:
         language: Language name as results spell it, such as `"clojure"`.
         suffixes: File name endings the parser reads, such as `(".clj", ".edn")`.
-        check: Function of `{path: text}` and the workspace root that returns
-            the parser's `SyntaxResult`. Each diagnostic names the path it was
-            given.
+        check: Private callback of `{path: text}` and the workspace root that
+            returns the parser's `SyntaxResult`. Each diagnostic names the path
+            it was given. Register the guard's hooks, not this callback as a tool.
         most_files: Most changed files one operation parses again. The rest
             wait for the next operation.
         workspace_root: Function returning the session's working copy;
@@ -60,7 +62,7 @@ class SyntaxGuard:
         self,
         language,
         suffixes,
-        check,
+        check: Callable[[Mapping[str, str], Path], SyntaxResult],
         *,
         most_files=200,
         workspace_root=None,

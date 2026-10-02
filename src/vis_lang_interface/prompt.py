@@ -26,7 +26,6 @@ from __future__ import annotations
 VERBS = (
     "format_code",
     "lint_code",
-    "check_syntax",
     "run_tests",
     "build",
     "repl_start",
@@ -35,9 +34,9 @@ VERBS = (
     "repl_eval",
     "repl_stop",
 )
-"""Every verb this contract knows, in the order a block lists them."""
+"""Public tool verbs, in the order a block lists them; syntax checks are hooks only."""
 
-_TOOLCHAIN = ("format_code", "lint_code", "check_syntax", "run_tests", "build")
+_TOOLCHAIN = ("format_code", "lint_code", "run_tests", "build")
 """The verbs that run the toolchain once and answer a result."""
 
 _REPL = ("repl_start", "repl_status", "repl_connect", "repl_eval", "repl_stop")

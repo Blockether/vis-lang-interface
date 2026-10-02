@@ -20,9 +20,11 @@ def test_verbs_are_listed_in_contract_order_whatever_order_they_arrive_in():
     assert block.splitlines()[2] == "  py.repl_start · py.repl_eval"
 
 
-def test_a_syntax_check_is_a_toolchain_verb_listed_after_lint():
-    block = prompt.routing("Clojure", "clj", ("run_tests", "check_syntax", "lint_code"))
-    assert block.splitlines()[1] == "  clj.lint_code · clj.check_syntax · clj.run_tests"
+def test_syntax_checks_are_private_hooks_not_public_toolchain_verbs():
+    assert "check_syntax" not in prompt.VERBS
+    assert "check_syntax" not in prompt.routing("Clojure", "clj")
+    with pytest.raises(ValueError, match="unknown language verbs: check_syntax"):
+        prompt.routing("Clojure", "clj", ("check_syntax",))
 
 
 def test_a_toolchain_verb_routes_away_from_a_shell_line():

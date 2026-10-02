@@ -82,20 +82,22 @@ method's own docstring already carries its arguments and its result.
 
 ## Keep source files parseable
 
-`SyntaxGuard` asks the language's own parser whether the files the model changes still parse. The
-interface has no parser: give the guard the file suffixes your parser reads and a `check` function.
-`check` takes `{path: text}` and the workspace root and returns a `SyntaxResult` whose diagnostics
-name the paths it was given.
+`SyntaxGuard` asks the language's own parser whether changed files still parse. Syntax checks run
+only through edit hooks. They are not tools available to `python_execution` or public routing verbs.
+
+The interface has no parser. Supply the file suffixes and a private `_check_syntax` callback.
+The callback takes `{path: text}` and the workspace root. It returns a `SyntaxResult` whose
+diagnostics name the supplied paths. Keep the callback outside the extension's exported symbols.
 
 ```python
 from vis_lang_interface import Diagnostic, SyntaxResult
 from vis_lang_interface.syntax import SyntaxGuard
 
-def check(sources, root):
+def _check_syntax(sources, root):
     rows = [Diagnostic(path, line, column, "error", message) for ... in parse(sources)]
     return SyntaxResult.of("clojure", rows, files=len(sources))
 
-guard = SyntaxGuard("clojure", (".clj", ".cljs", ".cljc", ".edn"), check)
+guard = SyntaxGuard("clojure", (".clj", ".cljs", ".cljc", ".edn"), _check_syntax)
 
 vis.register_extension(vis.Extension(..., op_hooks=guard.op_hooks(), ctx=guard.ctx))
 ```

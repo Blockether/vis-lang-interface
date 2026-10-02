@@ -1,9 +1,11 @@
 """A syntax guard refuses breaking patches and reports writes that broke parsing."""
 
 import os
+import runpy
 import shutil
 from pathlib import Path
 
+import blockether.vis.extension as vis
 import pytest
 
 from vis_lang_interface import Diagnostic, SyntaxResult, process, syntax
@@ -262,6 +264,32 @@ def test_the_hooks_cover_patch_and_python_execution(guard):
         (("python_execution",), "before"),
         (("patch", "python_execution"), "after"),
     ]
+
+
+def test_the_interface_registers_no_syntax_tools(monkeypatch):
+    registered = []
+    monkeypatch.setattr(vis, "register_extension", registered.append)
+    runpy.run_path(str(Path(__file__).resolve().parents[1] / "extension.py"))
+    assert len(registered) == 1
+    assert not registered[0].symbols
+
+
+def test_hooks_dispatch_only_to_the_parser_for_the_file_suffix(tmp_path):
+    calls = []
+
+    def _check_syntax(sources, root):
+        calls.append(dict(sources))
+        return SyntaxResult.of("example", (), files=len(sources))
+
+    guards = [
+        SyntaxGuard(
+            language, suffixes, _check_syntax, workspace_root=lambda: tmp_path, state={}
+        )
+        for language, suffixes in (("lisp", (".lisp",)), ("python", (".py", ".pyi")))
+    ]
+    for guard in guards:
+        guard.op_hooks()[0].fn(patched("before", "after", path="src/example.py"))
+    assert calls == [{"src/example.py": "after"}]
 
 
 def test_a_guard_needs_a_suffix(parser):
