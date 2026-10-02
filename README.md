@@ -14,7 +14,7 @@ Add the package as a dependency of your extension and return its result types:
 ```toml
 dependencies = [
   "vis-agent>=0.2.26",
-  "vis-lang-interface @ git+https://github.com/Blockether/vis-lang-interface@v2.4.0",
+  "vis-lang-interface @ git+https://github.com/Blockether/vis-lang-interface@v2.5.0",
 ]
 ```
 
