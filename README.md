@@ -34,7 +34,7 @@ def lint(paths):
 | `vis_lang_interface.runtime` | `start`, `Runtime`, `Rendezvous`, `RuntimeGone` — a runtime that stays alive between calls |
 | `vis_lang_interface.project` | `project_root`, `source_files` |
 | `vis_lang_interface.presentation` | Activity rendering every language binding shares: a pass or fail verdict for lint, syntax and test runs, changed-line counts for formatting, and an evaluation's code, output, error and value |
-| `vis_lang_interface.syntax` | `SyntaxGuard` — refuses a patch that makes a file unparseable and reports Python writes that did |
+| `vis_lang_interface.syntax` | `SyntaxGuard` — validates edit previews, applies language repairs and reports files that remain unparseable |
 | `vis_lang_interface.prompt` | `routing` — the block that tells the model your verbs exist |
 
 ## Count what formatting changed
@@ -102,22 +102,33 @@ guard = SyntaxGuard("clojure", (".clj", ".cljs", ".cljc", ".edn"), _check_syntax
 vis.register_extension(vis.Extension(..., op_hooks=guard.op_hooks(), ctx=guard.ctx))
 ```
 
-- Before a `patch` writes, Vis gives the hook the file as the patch would leave it. A patch that
-  would make a parseable file unparseable is refused, and nothing is written. A file that did not
-  parse before is not guarded, so a repair can take several steps.
-- After a `patch`, and after every `python_execution` block, the guard parses the changed files
-  again. This covers `Path.write_text()`, `open(..., "w")` and the programs a block ran. Files that
-  still do not parse reach the model's next request as `session["clojure_syntax_errors"]`.
-- `patch` is atomic for one file, and the guard judges each call on its own. A block that patches
-  several files keeps the patches that passed when a later one is refused.
-- The guard watches the files under the workspace root that git lists, tracked or untracked but not
-  ignored. Where git cannot list the tree, it walks it and skips hidden and build directories.
-  Between listings, file and directory stat calls find what changed, so a block pays no process.
-- When the parser cannot answer because its toolchain is missing, slow or failing, the guard allows
-  the operation, logs why and does not ask again for two minutes.
+- Before a `patch` writes, Vis gives the hook the proposed text and changed line spans.
+  If a repair callback returns valid source, the host writes that source once and reports the corrections.
+  Otherwise, a patch that breaks a parseable file is refused. A previously broken file can still be repaired in steps.
+- After a patch, the guard checks the changed file again.
+  After a Python block, it can repair changed files before checking them again.
+  This includes writes from `Path.write_text()`, `open(..., "w")` and programs started by the block.
+- Unresolved errors appear in `session["clojure_syntax_errors"]`.
+  Completed repairs appear in `session["clojure_syntax_repairs"]`, with notes and diffs.
+  Other language names replace the `clojure` prefix.
+- A patch is atomic for one file. A Python block is not transactional.
+  Post-block repairs happen after the original writes and cannot undo the block's other effects.
+  Each repair checks that the file still matches before replacing it. Symbolic links are not replaced.
+- The guard watches tracked and untracked workspace files, but skips ignored files.
+  If Git cannot list files, it walks the workspace and skips hidden and build directories.
+  Between listings, file and directory stat calls find changes without a process.
+- If the parser is unavailable, the guard allows the operation, logs the failure and waits two minutes before retrying.
+  It never accepts a repair without successful validation.
 
-A Vis host that predates the patch preview gives the before hook nothing to judge. There, the guard
-only reports a broken file after the write.
+To enable repairs, pass `repair=repair_source` to `SyntaxGuard`.
+The callback receives the proposed `source` and keyword arguments `original`, `spans` and `parses_clean`.
+Spans are inclusive, one-based line ranges in the proposed text.
+After a Python block, `original` is `None` and the spans cover the whole file.
+
+Return an object with a changed `source` string and a nonempty list or tuple of `notes`.
+Return `None` when the repair is unsafe or cannot produce valid source.
+Use `parses_clean(candidate)` to validate the complete candidate without executing it.
+Keep language parsing and repair algorithms in the language extension, not this package.
 
 ## Everything a language tool starts runs in the jail
 

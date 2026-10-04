@@ -1,25 +1,24 @@
-"""Keeping a language's files parseable while the model edits them.
+"""Check changed files and apply validated structural repairs through edit hooks.
 
-A language extension supplies a private callback to its own parser. Syntax
-checking is a hook capability, never a symbol exposed to `python_execution`.
-`SyntaxGuard` asks that question at the points where Vis changes files:
+The language extension supplies its parser and optional repair callback.
+Before a patch writes, a repair decision replaces the proposed source.
+The host writes that validated source once and reports the corrections.
+Without a valid repair, a patch that breaks a parseable file is refused.
 
-* Before a `patch` writes, Vis shows the hook the file as the patch would
-  leave it. A patch that would make a parseable file unparseable is refused,
-  and nothing is written. A file that did not parse before is not guarded, so
-  a repair can take several steps.
-* After a `patch`, and after every `python_execution` block, the files that
-  changed are parsed again. This covers `Path.write_text()`, `open(..., "w")`
-  and the programs a block ran. Files that still do not parse reach the model
-  on its next request, through `ctx`.
+After a Python block, the guard checks changed files and can repair them.
+Each repair uses a separate atomic replacement and checks for concurrent changes.
+The block's earlier writes are not transactional and cannot be rolled back.
+Unresolved errors and completed repairs reach the next request through ``ctx``.
 
-The guard has no parser of its own. When it cannot ask, because the toolchain
-is missing, slow or failing, it allows the operation and logs why.
+The guard has no parser. If its parser is unavailable, it allows the operation
+and logs the failure. An unavailable parser never authorizes a repair.
 """
 
 from __future__ import annotations
 
+import difflib
 import os
+import tempfile
 import threading
 import time
 from collections.abc import Callable, Mapping
@@ -41,8 +40,14 @@ MOST_REPORTED = 20
 QUIET_S = 120.0
 
 
+def _read_source(path):
+    """Read source without changing its line endings."""
+    with Path(path).open(encoding="utf-8", newline="") as stream:
+        return stream.read()
+
+
 class SyntaxGuard:
-    """Refuses a patch that breaks parsing, and reports writes that did.
+    """Check edits, propose validated repairs and report unresolved errors.
 
     Args:
         language: Language name as results spell it, such as `"clojure"`.
@@ -50,6 +55,11 @@ class SyntaxGuard:
         check: Private callback of `{path: text}` and the workspace root that
             returns the parser's `SyntaxResult`. Each diagnostic names the path
             it was given. Register the guard's hooks, not this callback as a tool.
+        repair: Optional callback of ``source``, with keyword arguments
+            ``original``, ``spans`` and ``parses_clean``. Spans use inclusive,
+            one-based line numbers in the proposed text. Return an object with
+            ``source`` and nonempty ``notes``, or None. The parser must accept
+            the complete result. A post-block repair has no original source.
         most_files: Most changed files one operation parses again. The rest
             wait for the next operation.
         workspace_root: Function returning the session's working copy;
@@ -64,6 +74,7 @@ class SyntaxGuard:
         suffixes,
         check: Callable[[Mapping[str, str], Path], SyntaxResult],
         *,
+        repair=None,
         most_files=200,
         workspace_root=None,
         state=None,
@@ -75,6 +86,7 @@ class SyntaxGuard:
         self.key = f"{self.language}_syntax_errors"
         self.most_files = max(1, int(most_files))
         self._check = check
+        self._repair = repair
         self._workspace_root = workspace_root or vis.workspace_root
         self._state = vis.state if state is None else state
         self._trees = {}
@@ -94,7 +106,7 @@ class SyntaxGuard:
         )
 
     def before_patch(self, call):
-        """Refuse a patch that would leave a parseable file unparseable."""
+        """Repair a proposed patch, or refuse it if it breaks a parseable file."""
         try:
             return self._refusal(call.get("preview"))
         except Exception as error:
@@ -118,8 +130,10 @@ class SyntaxGuard:
                 if call.get("op") == "patch":
                     if call.get("result") is not None:
                         self._recheck(root, self._patched(call.get("args"), root))
-                else:
-                    self._recheck(root, self._tree(root).changes(self.covers))
+                elif call.get("result") is not None:
+                    self._recheck(
+                        root, self._tree(root).changes(self.covers), repair=True
+                    )
         except Exception as error:
             self._log(f"after {call.get('op')}", error)
         return None
@@ -127,11 +141,11 @@ class SyntaxGuard:
     def ctx(self, env=None):
         """Session context naming the files under the workspace that do not parse."""
         try:
-            report = self._report(Path(self._workspace_root()))
+            root = Path(self._workspace_root())
+            report = self._report(root)
+            repairs = self._state.get(f"{self.language}_syntax_repairs:{root}", [])
         except Exception as error:
             self._log("context", error)
-            return {}
-        if not report:
             return {}
         rows = [
             f"{path}:{row.get('line', 0)}:{row.get('column', 0)}: {row.get('message', '')}"
@@ -140,10 +154,13 @@ class SyntaxGuard:
         if len(rows) > MOST_REPORTED:
             hidden = len(rows) - MOST_REPORTED
             rows = [*rows[:MOST_REPORTED], f"... and {hidden} more files"]
-        return {self.key: rows}
+        context = {self.key: rows} if rows else {}
+        if repairs:
+            context[f"{self.language}_syntax_repairs"] = repairs
+        return context
 
     def _refusal(self, preview):
-        """`vis.block` for a preview that breaks a parseable file, else None."""
+        """Return a repair or refusal for an invalid preview, otherwise None."""
         if not isinstance(preview, Mapping):
             return None
         path, before, after = (
@@ -157,6 +174,11 @@ class SyntaxGuard:
         broken = self._ask({path: after}, root)
         if not broken:
             return None
+        candidate = self._candidate(
+            path, after, root, original=before, spans=preview.get("spans", [])
+        )
+        if candidate:
+            return candidate
         if self._ask({path: before}, root) != ():
             return None
         row = broken[0]
@@ -169,6 +191,73 @@ class SyntaxGuard:
             "parser still reads it, then patch again."
         )
         return _block(reason, hint)
+
+    def _candidate(self, path, source, root, *, original, spans):
+        """Accept a language repair only when its final source passes the parser."""
+        if self._repair is None or not spans:
+            return None
+        verdicts = {source: False}
+
+        def parses_clean(text):
+            if text not in verdicts:
+                verdicts[text] = self._ask({path: text}, root) == ()
+            return verdicts[text]
+
+        try:
+            candidate = self._repair(
+                source, original=original, spans=spans, parses_clean=parses_clean
+            )
+            if (
+                candidate is not None
+                and isinstance(candidate.source, str)
+                and candidate.source != source
+                and isinstance(candidate.notes, (list, tuple))
+                and candidate.notes
+                and all(
+                    isinstance(note, str) and note.strip() for note in candidate.notes
+                )
+                and parses_clean(candidate.source)
+            ):
+                return {
+                    "marker": "repair",
+                    "source": candidate.source,
+                    "notes": list(candidate.notes),
+                }
+        except Exception as error:
+            self._log("repair", error)
+        return None
+
+    def _write_repair(self, path, before, after):
+        """Replace a changed regular file once, only while its source still matches."""
+        temporary = None
+        try:
+            if path.is_symlink() or _read_source(path) != before:
+                return False
+            mode = path.stat().st_mode & 0o7777
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                newline="",
+                dir=path.parent,
+                prefix=f".{path.name}.vis-",
+                suffix=".tmp",
+                delete=False,
+            ) as stream:
+                temporary = Path(stream.name)
+                stream.write(after)
+                stream.flush()
+                os.fsync(stream.fileno())
+            temporary.chmod(mode)
+            if path.is_symlink() or _read_source(path) != before:
+                return False
+            os.replace(temporary, path)
+            return True
+        except OSError as error:
+            self._log("repair write", error)
+            return False
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
 
     def _ask(self, sources, root):
         """The parser's diagnostics for `sources`, or None when it cannot be asked."""
@@ -194,7 +283,7 @@ class SyntaxGuard:
             return {}
         return {str(path): _stamp(path)}
 
-    def _recheck(self, root, changed):
+    def _recheck(self, root, changed, *, repair=False):
         """Parse the `{path: stamp}` files again and store what still does not parse."""
         report = dict(self._report(root))
         for shown in [
@@ -203,10 +292,11 @@ class SyntaxGuard:
             del report[shown]
         tree = self._trees.get(str(root))
         sources, stamps = {}, {}
+        repairs = []
         for path in sorted(changed)[: self.most_files]:
             shown = _shown(root, path)
             try:
-                sources[shown] = Path(path).read_text(encoding="utf-8")
+                sources[shown] = _read_source(path)
             except (OSError, UnicodeDecodeError):
                 report.pop(shown, None)
                 if tree:
@@ -216,6 +306,40 @@ class SyntaxGuard:
         if sources:
             rows = self._ask(sources, root)
             if rows is not None:
+                if repair and self._repair is not None:
+                    for shown in dict.fromkeys(row.path for row in rows):
+                        source = sources[shown]
+                        candidate = self._candidate(
+                            shown,
+                            source,
+                            root,
+                            original=None,
+                            spans=[[1, max(1, len(source.splitlines()))]],
+                        )
+                        path = _absolute(root, shown)
+                        if candidate and self._write_repair(
+                            path, source, candidate["source"]
+                        ):
+                            delta = "".join(
+                                difflib.unified_diff(
+                                    source.splitlines(keepends=True),
+                                    candidate["source"].splitlines(keepends=True),
+                                    fromfile=shown,
+                                    tofile=shown,
+                                )
+                            )
+                            repairs.append(
+                                f"{shown}: {' '.join(candidate['notes'])}\n{delta}"
+                            )
+                        try:
+                            sources[shown] = _read_source(path)
+                            stamps[str(path)] = _stamp(path)
+                        except (OSError, UnicodeDecodeError):
+                            sources.pop(shown, None)
+                    rows = self._ask(sources, root)
+                if rows is None:
+                    self._store(root, report)
+                    return
                 for shown in sources:
                     report.pop(shown, None)
                 for row in rows:
@@ -227,6 +351,11 @@ class SyntaxGuard:
                 if tree:
                     tree.seen.update(stamps)
         self._store(root, report)
+        key = f"{self.language}_syntax_repairs:{root}"
+        if repairs:
+            self._state[key] = repairs
+        elif self._state.get(key):
+            del self._state[key]
 
     def _tree(self, root):
         """The listed files under `root`, listed again when the listing is old."""
