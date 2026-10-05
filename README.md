@@ -33,7 +33,7 @@ def lint(paths):
 | `vis_lang_interface.process` | `run`, `spawn`, `tool_path`, `ToolRun`, `ToolMissing`, `ToolTimeout` |
 | `vis_lang_interface.runtime` | `start`, `Runtime`, `Rendezvous`, `RuntimeGone` — a runtime that stays alive between calls |
 | `vis_lang_interface.project` | `project_root`, `source_files` |
-| `vis_lang_interface.presentation` | Activity rendering every language binding shares: a pass or fail verdict for lint, syntax and test runs, changed-line counts for formatting, and an evaluation's code, output, error and value |
+| `vis_lang_interface.presentation` | Activity rendering every language binding shares: a pass or fail verdict for lint, syntax and test runs, changed-line counts for formatting, and an evaluation's code, repairs, output, error and value |
 | `vis_lang_interface.syntax` | `SyntaxGuard` — validates edit previews, applies language repairs and reports files that remain unparseable |
 | `vis_lang_interface.prompt` | `routing` — the block that tells the model your verbs exist |
 

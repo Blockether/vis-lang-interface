@@ -207,6 +207,10 @@ class ReplResult:
     duration_ms: Annotated[int, "Wall time of the evaluation in milliseconds."]
     is_running: Annotated[bool, "Whether the REPL is still available."]
     code: Annotated[str, "The evaluated code, pretty-printed when it parses."] = ""
+    repairs: Annotated[
+        tuple[str, ...],
+        "Structural repairs made to the code before it was evaluated, one note each.",
+    ] = ()
 
 
 @dataclass(frozen=True)

@@ -391,6 +391,45 @@ def test_an_evaluation_summary_says_how_it_ended():
     )
 
 
+def test_a_repaired_evaluation_lists_its_repairs_below_the_code():
+    notes = ("line 2 added `)` → `(* x 2))`",)
+    shown = presentation.repl_presentation(
+        "Evaluate in Clojure REPL",
+        ReplResult(
+            "clojure",
+            "nrepl:~/app",
+            "#'user/twice",
+            "",
+            "",
+            4,
+            True,
+            code="(defn twice [x]\n  (* x 2))",
+            repairs=notes,
+        ),
+    )
+    assert shown.summary == "returned #'user/twice in 4 ms after 1 repair"
+    assert _texts(shown) == [
+        "Code",
+        "(defn twice [x]\n  (* x 2))",
+        "Repairs",
+        notes[0],
+        "Value",
+        "#'user/twice",
+    ]
+
+
+def test_an_evaluation_summary_counts_its_repairs():
+    def summary(repairs, *, error=""):
+        result = ReplResult("python", "r", "", "", error, 3, True, repairs=repairs)
+        return presentation.repl_presentation("Evaluate", result).summary
+
+    assert summary(()) == "finished in 3 ms"
+    assert summary(("a",)) == "finished in 3 ms after 1 repair"
+    assert summary(("a", "b"), error="NameError: x") == (
+        "failed in 3 ms after 2 repairs · NameError: x"
+    )
+
+
 def test_a_session_says_what_happened_in_its_summary_alone():
     session = ReplSession(
         "clojure",

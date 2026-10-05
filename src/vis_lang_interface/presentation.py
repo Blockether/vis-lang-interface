@@ -336,8 +336,10 @@ def _block(heading, text, language=None):
 
 
 def _repl_summary(result):
-    """How an evaluation ended, on one line: its error or value, and its time."""
+    """How an evaluation ended, on one line: error or value, time and repairs."""
     took = _duration(result.duration_ms)
+    if result.repairs:
+        took += f" after {_count(len(result.repairs), 'repair')}"
     error = result.error.strip()
     value = result.value.strip()
     if error:
@@ -356,13 +358,14 @@ def _repl_summary(result):
 def repl_presentation(label, result):
     """Presentation for a `ReplResult`, in the order a reader follows an evaluation.
 
-    The evaluated code comes first, then what it printed, its error and its
-    value. Each appears under its own heading, and only when there is something
-    to show. Code and value keep the pretty-printing that the language extension
-    gave them.
+    The evaluated code comes first, then the repairs made to it before it ran,
+    what it printed, its error and its value. Each appears under its own
+    heading, and only when there is something to show. Code and value keep the
+    pretty-printing that the language extension gave them.
     """
     content = (
         *_block("Code", result.code, result.language),
+        *_block("Repairs", "\n".join(result.repairs)),
         *_block("Output", result.output),
         *_block("Error", result.error),
         *_block("Value", result.value, result.language),
