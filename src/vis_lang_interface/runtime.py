@@ -151,8 +151,18 @@ class Runtime:
         self.cwd = str(cwd) if cwd else None
         self.started_at = time.time()
         self._meeting = meeting
+        # Answers that no call waits for by id. Calls without an id take them in
+        # turn, one call at a time.
         self._answers: queue.Queue = queue.Queue()
         self._lock = threading.Lock()
+        # One request line at a time on the channel.
+        self._writing = threading.Lock()
+        # The answer queue of each call that waits for an id, and the ids of the
+        # calls that gave up, so that a late answer reaches no other call.
+        self._routes = threading.Lock()
+        self._waiting: dict[str, queue.Queue] = {}
+        self._abandoned: set[str] = set()
+        self._closed = False
         self._thread = threading.Thread(
             target=self._pump, name="vis-lang-runtime", daemon=True
         )
@@ -202,6 +212,10 @@ class Runtime:
     def request(self, payload, timeout_s=DEFAULT_TIMEOUT_S, *, wants=None):
         """Send one request and wait for its answer.
 
+        Calls with `wants` run at the same time, and each one gets the answer with
+        its own id. Calls without it run one at a time and take the next answer
+        that no call with an id waits for.
+
         Args:
             payload: The request, as JSON-safe data.
             timeout_s: Seconds to wait for the answer.
@@ -215,40 +229,61 @@ class Runtime:
             RuntimeGone: The runtime stopped before answering.
             TimeoutError: The deadline passed with no answer.
         """
-        with self._lock:
-            if not self.is_running:
+        if wants is None:
+            with self._lock:
+                return self._exchange(payload, timeout_s, self._answers, None)
+        key = str(wants)
+        box: queue.Queue = queue.Queue()
+        with self._routes:
+            if self._closed:
                 raise RuntimeGone(self._stopped())
-            try:
+            self._waiting[key] = box
+            self._abandoned.discard(key)
+        answered = False
+        try:
+            answer = self._exchange(payload, timeout_s, box, key)
+            answered = True
+            return answer
+        finally:
+            with self._routes:
+                if self._waiting.get(key) is box:
+                    del self._waiting[key]
+                if not answered:
+                    self._abandoned.add(key)
+
+    def _exchange(self, payload, timeout_s, box, wants):
+        """Write `payload`, then wait in `box` for the answer with the id `wants`.
+
+        With `wants` None, the next answer in `box` is the answer.
+        """
+        if not self.is_running:
+            raise RuntimeGone(self._stopped())
+        try:
+            with self._writing:
                 self._meeting.write(json.dumps(payload))
-            except (OSError, ValueError, AttributeError) as exc:
-                raise RuntimeGone(self._stopped()) from exc
-            deadline = time.monotonic() + float(timeout_s)
-            pause = _LIVENESS_STEP_S
-            while True:
-                left = deadline - time.monotonic()
-                if left <= 0:
-                    raise TimeoutError(
-                        f"{self.command[0]} did not answer within {timeout_s:g}s"
-                    )
-                try:
-                    line = self._answers.get(timeout=min(pause, left))
-                except queue.Empty:
-                    # A runtime that died mid-call never answers: say so now
-                    # instead of holding the caller to the whole budget.
-                    if not self.is_running:
-                        raise RuntimeGone(self._stopped()) from None
-                    pause = min(pause * 2, _LIVENESS_MAX_S)
-                    continue
-                if line is None:
-                    raise RuntimeGone(self._stopped())
-                try:
-                    answer = json.loads(line)
-                except ValueError:
-                    # Not an answer: the runtime printed something of its own on
-                    # the channel. The pty log already has it.
-                    continue
-                if wants is None or str(answer.get("id")) == str(wants):
-                    return answer
+        except (OSError, ValueError, AttributeError) as exc:
+            raise RuntimeGone(self._stopped()) from exc
+        deadline = time.monotonic() + float(timeout_s)
+        pause = _LIVENESS_STEP_S
+        while True:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                raise TimeoutError(
+                    f"{self.command[0]} did not answer within {timeout_s:g}s"
+                )
+            try:
+                answer = box.get(timeout=min(pause, left))
+            except queue.Empty:
+                # A runtime that died mid-call never answers: say so now
+                # instead of holding the caller to the whole budget.
+                if not self.is_running:
+                    raise RuntimeGone(self._stopped()) from None
+                pause = min(pause * 2, _LIVENESS_MAX_S)
+                continue
+            if answer is None:
+                raise RuntimeGone(self._stopped())
+            if wants is None or str(answer.get("id")) == wants:
+                return answer
 
     def stop(self):
         """End the runtime, and with it everything it owns.
@@ -272,16 +307,47 @@ class Runtime:
             pass
 
     def _pump(self):
-        """Carry every line the runtime writes into the answer queue."""
+        """Carry every answer the runtime writes to the call that waits for it."""
         try:
             for line in self._meeting.lines():
                 text = line.strip()
                 if text:
-                    self._answers.put(text)
+                    self._route(text)
         except (OSError, ValueError):
             pass
         finally:
+            with self._routes:
+                self._closed = True
+                boxes = list(self._waiting.values())
+            for box in boxes:
+                box.put(None)
             self._answers.put(None)
+
+    def _route(self, text):
+        """Give one answer to the call that waits for its id.
+
+        A line that is not a JSON object is not an answer: the runtime printed
+        something of its own, and the pty log already has it. The late answer of
+        a call that gave up reaches no call. Every other answer goes to the calls
+        without an id.
+        """
+        try:
+            answer = json.loads(text)
+        except ValueError:
+            return
+        if not isinstance(answer, dict):
+            return
+        if answer.get("id") is not None:
+            key = str(answer["id"])
+            with self._routes:
+                box = self._waiting.get(key)
+                if box is not None:
+                    box.put(answer)
+                    return
+                if key in self._abandoned:
+                    self._abandoned.discard(key)
+                    return
+        self._answers.put(answer)
 
     def _stopped(self):
         """Why a call has no answer, with the last words the runtime said."""

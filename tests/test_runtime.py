@@ -2,6 +2,7 @@
 
 import json
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -26,6 +27,20 @@ for line in sys.stdin:
 SILENT = """import sys
 for line in sys.stdin:
     pass
+"""
+
+# Answers each request after its `delay`, so a later request can be answered first.
+STAGGER = """import sys, json, threading, time
+lock = threading.Lock()
+def answer(request):
+    time.sleep(float(request.get('delay', 0)))
+    with lock:
+        sys.stdout.write(json.dumps({'id': request.get('id'), 'echo': request}) + '\\n')
+        sys.stdout.flush()
+for line in sys.stdin:
+    line = line.strip()
+    if line:
+        threading.Thread(target=answer, args=(json.loads(line),)).start()
 """
 
 
@@ -121,3 +136,54 @@ def test_a_failed_start_closes_the_rendezvous_it_was_given(tmp_path):
     with pytest.raises(ToolMissing):
         runtime.start(["vis-no-such-runtime"], cwd=tmp_path, meeting=meeting)
     assert not Path(meeting.path).exists()
+
+
+# Regression, user report: a lint waited 57 s for a test run, because each call
+# held the whole runtime until its answer came.
+def test_calls_with_an_id_wait_only_for_their_own_answer(tmp_path):
+    live = runtime.start(driver(tmp_path, STAGGER), cwd=tmp_path, name="test")
+    answers = {}
+    slow = threading.Thread(
+        target=lambda: answers.update(
+            slow=live.request({"id": "slow", "delay": 2}, 10, wants="slow")
+        )
+    )
+    try:
+        slow.start()
+        time.sleep(0.2)
+        started = time.monotonic()
+        assert live.request({"id": "fast"}, 10, wants="fast")["id"] == "fast"
+        assert time.monotonic() - started < 1.5
+        slow.join(10)
+        assert answers["slow"]["id"] == "slow"
+    finally:
+        live.stop()
+
+
+def test_calls_without_an_id_still_run_one_at_a_time(tmp_path):
+    live = runtime.start(driver(tmp_path, STAGGER), cwd=tmp_path, name="test")
+    answers = {}
+    first = threading.Thread(
+        target=lambda: answers.update(
+            first=live.request({"op": "first", "delay": 1}, 10)
+        )
+    )
+    try:
+        first.start()
+        time.sleep(0.2)
+        assert live.request({"op": "second"}, 10)["echo"]["op"] == "second"
+        first.join(10)
+        assert answers["first"]["echo"]["op"] == "first"
+    finally:
+        live.stop()
+
+
+def test_a_late_answer_reaches_no_later_call(tmp_path):
+    live = runtime.start(driver(tmp_path, STAGGER), cwd=tmp_path, name="test")
+    try:
+        with pytest.raises(TimeoutError):
+            live.request({"id": "late", "delay": 1}, 0.3, wants="late")
+        time.sleep(1.2)
+        assert live.request({"op": "ping"}, 10)["echo"] == {"op": "ping"}
+    finally:
+        live.stop()
