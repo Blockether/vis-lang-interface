@@ -18,6 +18,21 @@ from vis_lang_interface import (
 )
 
 
+def _table(block: object) -> vis.ActivityTable:
+    assert isinstance(block, vis.ActivityTable), block
+    return block
+
+
+def _text(block: object) -> vis.ActivityText:
+    assert isinstance(block, vis.ActivityText), block
+    return block
+
+
+def _code(block: object) -> vis.ActivityCode:
+    assert isinstance(block, vis.ActivityCode), block
+    return block
+
+
 def test_clean_lint_summarizes_the_file_count():
     shown = presentation.lint_presentation(
         "Lint Clojure code", LintResult.of("clojure", [], files=1)
@@ -45,7 +60,7 @@ def test_syntax_presentation_counts_clean_files_and_shows_each_error():
         ),
     )
     assert broken.summary == "1 error in 1 of 3 files"
-    assert broken.content[0].rows[0] == (
+    assert _table(broken.content[0]).rows[0] == (
         "src/a.clj:4",
         "error",
         "",
@@ -61,7 +76,7 @@ def test_lint_findings_in_one_directory_form_one_table():
     )
     shown = presentation.lint_presentation("Lint Clojure code", result)
     assert shown.summary == "1 error in 1 of 2 files"
-    assert shown.content[0].rows[0] == (
+    assert _table(shown.content[0]).rows[0] == (
         "a.clj:3",
         "error",
         "unresolved-symbol",
@@ -90,7 +105,7 @@ def test_lint_findings_are_grouped_by_directory():
         ("src/app", "1 error, 1 warning in 2 files"),
         ("tests", "2 warnings in test_core.py"),
     ]
-    assert [row[0] for row in shown.sections[2].content[0].rows] == [
+    assert [row[0] for row in _table(shown.sections[2].content[0]).rows] == [
         "test_core.py:2",
         "test_core.py:9",
     ]
@@ -103,8 +118,8 @@ def test_lint_cuts_are_labelled(monkeypatch):
     one = presentation.lint_presentation(
         "Lint Clojure code", LintResult.of("clojure", unused, files=1)
     )
-    assert len(one.content[0].rows) == 2
-    assert one.content[1].text == "Showing the first 2 of 3 findings."
+    assert len(_table(one.content[0]).rows) == 2
+    assert _text(one.content[1]).text == "Showing the first 2 of 3 findings."
     spread = [
         Diagnostic("src/a.clj", 1, 1, "warning", "unused"),
         Diagnostic("test/a.clj", 1, 1, "warning", "unused"),
@@ -113,7 +128,7 @@ def test_lint_cuts_are_labelled(monkeypatch):
         "Lint Clojure code", LintResult.of("clojure", spread, files=2)
     )
     assert [section.headline for section in two.sections] == ["src"]
-    assert two.content[0].text == "Showing the first 1 of 2 directories."
+    assert _text(two.content[0]).text == "Showing the first 1 of 2 directories."
 
 
 def _format(result):
@@ -233,7 +248,9 @@ def test_a_failed_run_without_named_failures_shows_its_output():
     shown = presentation.test_presentation("Run Clojure tests", result)
     assert shown.summary == "1 failed in 0.9 s"
     assert shown.sections == ()
-    assert shown.content[0].text == "Syntax error compiling at (app/core.clj:3:1)."
+    assert (
+        _text(shown.content[0]).text == "Syntax error compiling at (app/core.clj:3:1)."
+    )
 
 
 def test_failing_test_cuts_are_labelled(monkeypatch):
@@ -250,7 +267,7 @@ def test_failing_test_cuts_are_labelled(monkeypatch):
     )
     shown = presentation.test_presentation("Run Python tests", result)
     assert [section.headline for section in shown.sections] == ["test_1"]
-    assert shown.content[0].text == "Showing the first 1 of 2 failing tests."
+    assert _text(shown.content[0]).text == "Showing the first 1 of 2 failing tests."
 
 
 def test_a_long_failure_stays_one_line_with_the_whole_message_behind_it():
@@ -268,7 +285,7 @@ def test_a_long_failure_stays_one_line_with_the_whole_message_behind_it():
     assert section.headline == "t.py"
     assert section.summary.endswith("…")
     assert len(section.summary.encode("utf-8")) <= 512
-    assert section.content[0].text == message
+    assert _text(section.content[0]).text == message
 
 
 def test_a_long_nested_test_name_keeps_its_own_case():
@@ -289,7 +306,7 @@ def test_a_long_nested_test_name_keeps_its_own_case():
     assert section.headline.endswith("description › keeps the case that failed")
     assert len(section.headline) <= presentation.MAX_LINE
     assert section.summary == "a_test.clj:7 · Expected: (= 1 2)"
-    assert [block.text for block in section.content] == ["Actual: false"]
+    assert [_text(block).text for block in section.content] == ["Actual: false"]
 
 
 def test_build_lists_its_artifacts():
@@ -303,7 +320,7 @@ def test_build_lists_its_artifacts():
         ),
     )
     assert shown.summary == "1 artifact in 2.5 s"
-    assert shown.content[0].rows[0] == (
+    assert _table(shown.content[0]).rows[0] == (
         "dist/app-1.0.0-py3-none-any.whl",
         "wheel",
         "4.2 kB",
@@ -321,7 +338,7 @@ def test_failed_build_shows_what_the_toolchain_reported():
         ),
     )
     assert shown.summary == "build failed in 0.8 s"
-    assert shown.content[0].rows[0][0] == "src/app.clj:12"
+    assert _table(shown.content[0]).rows[0][0] == "src/app.clj:12"
 
 
 def test_build_without_artifacts_says_so():
@@ -359,7 +376,7 @@ def test_an_evaluation_shows_code_output_and_value_in_order():
         "Value",
         "{:a 1,\n :b [1 2 3]}",
     ]
-    code, output, value = shown.content[1::2]
+    code, output, value = (_code(block) for block in shown.content[1::2])
     assert [code.language, output.language, value.language] == [
         "clojure",
         None,
@@ -435,7 +452,7 @@ def test_a_session_says_what_happened_in_its_summary_alone():
         "clojure",
         "nrepl:~/app",
         "~/app",
-        "clojure -M:nrepl",
+        ("clojure", "-M:nrepl"),
         True,
         "started · port 7888 · pid 42",
     )
@@ -446,7 +463,7 @@ def test_a_session_says_what_happened_in_its_summary_alone():
 
 def test_a_session_without_detail_reads_as_its_state():
     sessions = [
-        ReplSession("python", "~/app", "~/app", "python3", is_running)
+        ReplSession("python", "~/app", "~/app", ("python3",), is_running)
         for is_running in (True, False)
     ]
     summaries = [
@@ -464,8 +481,9 @@ def test_renderer_covers_start_success_and_failure():
     assert render(phase="start") is None
     assert render(phase="success", result=LintResult.of("clojure", [], files=1))
     failed = render(phase="failure", error=RuntimeError("clj-kondo is not on PATH"))
+    assert failed is not None
     assert failed.summary == "failed"
-    assert "clj-kondo" in failed.content[0].text
+    assert "clj-kondo" in _text(failed.content[0]).text
 
 
 def test_an_evaluation_shows_its_code_while_running_and_when_the_call_fails():
@@ -476,6 +494,7 @@ def test_an_evaluation_shows_its_code_while_running_and_when_the_call_fails():
     )
     tools = object()
     running = render(phase="start", args=(tools, "(+ 1 2)"), kwargs={})
+    assert running is not None
     assert (running.summary, _texts(running)) == ("running", ["Code", "(+ 1 2)"])
     failed = render(
         phase="failure",
@@ -483,6 +502,7 @@ def test_an_evaluation_shows_its_code_while_running_and_when_the_call_fails():
         kwargs={"code": "(+ 1 2)"},
         error=RuntimeError("No REPL is running in ~/app"),
     )
+    assert failed is not None
     assert failed.summary == "failed"
     assert _texts(failed) == ["Code", "(+ 1 2)", "Error", "No REPL is running in ~/app"]
     assert render(phase="start", args=(tools,), kwargs={}) is None

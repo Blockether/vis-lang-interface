@@ -78,7 +78,9 @@ def test_patch_returns_a_repair_without_writing(tmp_path):
 )
 def test_invalid_candidates_still_refuse_the_patch(tmp_path, candidate):
     guard = make_guard(tmp_path, lambda *a, **kw: candidate)
-    assert guard.before_patch(call("(a)", "(b"))["marker"] == "block"
+    verdict = guard.before_patch(call("(a)", "(b"))
+    assert verdict is not None
+    assert verdict["marker"] == "block"
 
 
 def test_valid_edits_never_run_repair(tmp_path):

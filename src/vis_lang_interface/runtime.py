@@ -22,6 +22,7 @@ never leaves an interpreter behind.
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import queue
@@ -85,7 +86,10 @@ class Rendezvous:
 
     def write(self, line):
         """Send one framed line to the runtime."""
-        os.write(self._to_runtime, (line + "\n").encode("utf-8"))
+        target = self._to_runtime
+        if target is None:
+            raise OSError(errno.EBADF, "The rendezvous is not open.")
+        os.write(target, (line + "\n").encode("utf-8"))
 
     def place(self, name, text):
         """Put a file of the runtime's own next to its FIFOs.
@@ -110,10 +114,13 @@ class Rendezvous:
         """Every line the runtime writes, until this rendezvous is closed."""
         held = b""
         while not self.closing.is_set():
-            if not select.select([self._from_runtime], [], [], _READ_POLL_S)[0]:
+            source = self._from_runtime
+            if source is None:
+                return
+            if not select.select([source], [], [], _READ_POLL_S)[0]:
                 continue
             try:
-                chunk = os.read(self._from_runtime, 65536)
+                chunk = os.read(source, 65536)
             except BlockingIOError:
                 continue
             except (OSError, ValueError):

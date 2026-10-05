@@ -120,7 +120,7 @@ def spawn(command, *, cwd=None, env=None, timeout_s=None, read_write=()):
         The shell handle: a mapping carrying `id`, `pid`, `status` and `exit`,
         with `logs`, `wait`, `type` and `stop` on it.
     """
-    options = {"command": str(command)}
+    options: dict[str, object] = {"command": str(command)}
     if cwd:
         options["cwd"] = str(cwd)
     if env:

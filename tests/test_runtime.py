@@ -120,6 +120,24 @@ def test_the_rendezvous_is_removed_with_the_runtime():
     assert not path.exists()
 
 
+def test_a_closed_rendezvous_refuses_a_write_like_a_closed_descriptor():
+    # Regression: the request end was None after close, so a write raised a
+    # TypeError that `Runtime.call` did not turn into RuntimeGone.
+    meeting = runtime.Rendezvous("test").open()
+    meeting.close()
+    with pytest.raises(OSError):
+        meeting.write(json.dumps({"op": "ping"}))
+
+
+def test_a_rendezvous_that_was_never_opened_has_no_lines():
+    # Regression: reading before `open` passed None to `select` and raised.
+    meeting = runtime.Rendezvous("test")
+    try:
+        assert list(meeting.lines()) == []
+    finally:
+        meeting.close()
+
+
 def test_a_driver_placed_in_the_rendezvous_starts_the_runtime(tmp_path):
     meeting = runtime.Rendezvous("test").open()
     placed = meeting.place("driver.py", ECHO)
