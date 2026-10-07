@@ -15,7 +15,8 @@ Import what you need:
 * `changes` — the lines an edit added and removed, as formatting counts them.
 * `process` — running a toolchain program and reading what it printed.
 * `runtime` — a language runtime that outlives the call that started it.
-* `project` — finding the project directory and its source files.
+* `project` — finding the project directory and its source files, and
+  reading a list argument that arrived as one bare string.
 * `presentation` — the Activity rendering the results share.
 * `prompt` — the routing block the extension puts in the system prompt.
 * `syntax` — refusing a patch that breaks parsing, and reporting writes that did.
@@ -30,7 +31,7 @@ from vis_lang_interface.process import (
     spawn,
     tool_path,
 )
-from vis_lang_interface.project import project_root, source_files
+from vis_lang_interface.project import project_root, source_files, string_list
 from vis_lang_interface.results import (
     BuildArtifact,
     BuildResult,
@@ -67,5 +68,6 @@ __all__ = [
     "run",
     "source_files",
     "spawn",
+    "string_list",
     "tool_path",
 ]
