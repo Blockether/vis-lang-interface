@@ -103,7 +103,7 @@ def shell_call():
     return vis.jailed_shell if is_hosted() else vis.shell
 
 
-def spawn(command, *, cwd=None, env=None, timeout_s=None, read_write=()):
+def spawn(command, *, cwd=None, env=None, timeout_s=None, read_write=(), shell_id=None):
     """Start one shell command as a confined child and answer its live handle.
 
     Args:
@@ -115,6 +115,8 @@ def spawn(command, *, cwd=None, env=None, timeout_s=None, read_write=()):
             to None is unset.
         read_write: Paths outside the session's own roots this child may read
             and write, such as the directory holding its rendezvous.
+        shell_id: Id for the shell. The same id, command and directory reach
+            the same live child from a later process. None lets the host pick.
 
     Returns:
         The shell handle: a mapping carrying `id`, `pid`, `status` and `exit`,
@@ -130,6 +132,8 @@ def spawn(command, *, cwd=None, env=None, timeout_s=None, read_write=()):
     grants = [str(path) for path in read_write]
     if grants:
         options["allow_read_write"] = grants
+    if shell_id:
+        options["id"] = str(shell_id)
     return shell_call()(options)
 
 

@@ -1,6 +1,7 @@
 """A runtime outlives its call, answers on its rendezvous, and can be ended."""
 
 import json
+import os
 import sys
 import threading
 import time
@@ -205,3 +206,82 @@ def test_a_late_answer_reaches_no_later_call(tmp_path):
         assert live.request({"op": "ping"}, 10)["echo"] == {"op": "ping"}
     finally:
         live.stop()
+
+
+def _alive(pid):
+    try:
+        os.kill(int(pid), 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    try:
+        with open(f"/proc/{int(pid)}/stat", encoding="utf-8") as stat:
+            return stat.read().split(") ", 1)[1][:1] != "Z"
+    except OSError:
+        return True
+
+
+def test_a_kept_runtime_outlives_the_process_that_started_it(tmp_path):
+    # A sandbox restart ends the Python process that holds the rendezvous. A
+    # kept runtime keeps running, and the next start attaches to it.
+    command = driver(tmp_path, ECHO)
+    first = runtime.start(command, cwd=tmp_path, name="test", shell_id="kept-echo")
+    try:
+        assert first.request({"op": "one"}, 10)["echo"]["op"] == "one"
+        first.detach()
+        time.sleep(0.3)
+        assert first.is_running is True
+        again = runtime.start(command, cwd=tmp_path, name="test", shell_id="kept-echo")
+        assert again.pid == first.pid
+        assert again.request({"op": "two"}, 10)["echo"]["op"] == "two"
+    finally:
+        first.stop()
+    assert first.is_running is False
+    assert not Path(first._meeting.path).exists()
+
+
+def test_an_answer_written_while_detached_reaches_no_later_call(tmp_path):
+    command = driver(tmp_path, STAGGER)
+    first = runtime.start(command, cwd=tmp_path, name="test", shell_id="kept-late")
+    try:
+        with pytest.raises(TimeoutError):
+            first.request({"id": "1", "delay": 1}, 0.2, wants="1")
+        first.detach()
+        time.sleep(1.2)
+        again = runtime.start(command, cwd=tmp_path, name="test", shell_id="kept-late")
+        assert again.request({"id": "2"}, 10, wants="2")["id"] == "2"
+    finally:
+        first.stop()
+
+
+def test_a_kept_runtime_with_another_command_is_replaced(tmp_path):
+    first = runtime.start(
+        driver(tmp_path, ECHO), cwd=tmp_path, name="test", shell_id="kept-swap"
+    )
+    first.detach()
+    second = runtime.start(
+        driver(tmp_path, ECHO, "other.py"),
+        cwd=tmp_path,
+        name="test",
+        shell_id="kept-swap",
+    )
+    try:
+        assert second.pid != first.pid
+        # The id now names the new runtime, so ask the old process itself.
+        deadline = time.time() + 5
+        while _alive(first.pid) and time.time() < deadline:
+            time.sleep(0.1)
+        assert _alive(first.pid) is False
+        assert second.request({"op": "ping"}, 10)["echo"] == {"op": "ping"}
+    finally:
+        second.stop()
+
+
+def test_a_runtime_that_is_not_kept_ends_when_its_process_detaches(tmp_path):
+    live = runtime.start(driver(tmp_path, ECHO), cwd=tmp_path, name="test")
+    live.detach()
+    deadline = time.time() + 5
+    while live.is_running and time.time() < deadline:
+        time.sleep(0.1)
+    assert live.is_running is False

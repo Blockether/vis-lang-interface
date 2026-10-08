@@ -152,6 +152,17 @@ answer = live.request({"op": "eval", "code": "1 + 1"}, timeout_s=30)
 live.stop()
 ```
 
+A sandbox restart ends the Python process that holds the rendezvous, and with it a normal runtime.
+Give `start` a `shell_id` to keep the runtime across that restart. The runtime then holds its own
+FIFOs, and the next `start` with the same id, command and directory attaches to it. Call `detach`
+to leave a kept runtime running, and `stop` to end it.
+
+```python
+live = runtime.start(["python3", driver_path], cwd=project, shell_id="my-runtime")
+live.detach()
+live = runtime.start(["python3", driver_path], cwd=project, shell_id="my-runtime")
+```
+
 ## The extensions that use it
 
 - [vis-lang-clojure](https://github.com/Blockether/vis-lang-clojure) — cljfmt, zprint, clj-kondo,

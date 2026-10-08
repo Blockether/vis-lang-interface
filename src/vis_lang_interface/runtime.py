@@ -17,7 +17,8 @@ lines to stdout, exactly as before. The pty log keeps whatever the runtime says
 about itself, and a failed start gives back that log.
 
 Closing the request FIFO is what ends a runtime, so an extension that goes away
-never leaves an interpreter behind.
+never leaves an interpreter behind. A kept runtime is the exception: it holds
+its own FIFOs, outlives the process that started it and ends only on `stop`.
 """
 
 from __future__ import annotations
@@ -33,7 +34,13 @@ import tempfile
 import threading
 import time
 
-from vis_lang_interface.process import RUN_PREFIX, is_hosted, spawn, tool_path
+from vis_lang_interface.process import (
+    RUN_PREFIX,
+    is_hosted,
+    shell_call,
+    spawn,
+    tool_path,
+)
 
 DEFAULT_TIMEOUT_S = 120.0
 """Seconds `request` waits for an answer when the caller names no budget."""
@@ -68,12 +75,21 @@ class Rendezvous:
     never races a reader that is stuck in the middle of a line.
     """
 
-    def __init__(self, name="runtime"):
-        self.path = tempfile.mkdtemp(prefix=f"{RUN_PREFIX}{name}-")
-        self.requests = os.path.join(self.path, "requests")
-        self.answers = os.path.join(self.path, "answers")
-        os.mkfifo(self.requests, 0o600)
-        os.mkfifo(self.answers, 0o600)
+    def __init__(self, name="runtime", path=None):
+        if path:
+            # The rendezvous of a kept runtime that an earlier process opened.
+            self.path = str(path)
+            self.requests = os.path.join(self.path, "requests")
+            self.answers = os.path.join(self.path, "answers")
+            for fifo in (self.requests, self.answers):
+                if not os.path.exists(fifo):
+                    raise FileNotFoundError(errno.ENOENT, "No rendezvous FIFO.", fifo)
+        else:
+            self.path = tempfile.mkdtemp(prefix=f"{RUN_PREFIX}{name}-")
+            self.requests = os.path.join(self.path, "requests")
+            self.answers = os.path.join(self.path, "answers")
+            os.mkfifo(self.requests, 0o600)
+            os.mkfifo(self.answers, 0o600)
         self.closing = threading.Event()
         self._to_runtime = None
         self._from_runtime = None
@@ -136,8 +152,8 @@ class Rendezvous:
                 line, held = held.split(b"\n", 1)
                 yield line.decode("utf-8", "replace")
 
-    def close(self):
-        """Stop reading, drop both ends and remove the directory holding them."""
+    def detach(self):
+        """Stop reading and drop both ends, but keep the directory and its FIFOs."""
         self.closing.set()
         for descriptor in (self._to_runtime, self._from_runtime):
             try:
@@ -146,17 +162,24 @@ class Rendezvous:
             except OSError:
                 pass
         self._to_runtime = self._from_runtime = None
+
+    def close(self):
+        """Stop reading, drop both ends and remove the directory holding them."""
+        self.detach()
         shutil.rmtree(self.path, ignore_errors=True)
 
 
 class Runtime:
     """One live language runtime and the framed conversation with it."""
 
-    def __init__(self, handle, meeting, command, cwd):
+    def __init__(self, handle, meeting, command, cwd, *, kept=False):
         self.shell = handle
         self.command = tuple(command)
         self.cwd = str(cwd) if cwd else None
         self.started_at = time.time()
+        # A kept runtime holds both ends of its rendezvous itself. It outlives the
+        # Python process that started it, and only `stop` ends it.
+        self.kept = bool(kept)
         self._meeting = meeting
         # Answers that no call waits for by id. Calls without an id take them in
         # turn, one call at a time.
@@ -297,15 +320,36 @@ class Runtime:
 
         Closing the rendezvous gives the EOF that makes the runtime shut down.
         Then the shell that it runs under is stopped, so a runtime that ignores
-        EOF still stops.
+        EOF still stops. A kept runtime never gets that EOF, so its shell is
+        stopped first.
         """
         self._meeting.closing.set()
         self._thread.join(_LIVENESS_MAX_S)
+        if self.kept:
+            self._stop_shell()
+            self._meeting.close()
+            return
         self._meeting.close()
         try:
             self.shell.wait(5)
         except Exception:
             pass
+        self._stop_shell()
+
+    def detach(self):
+        """Leave the runtime running and drop this process's ends of it.
+
+        A kept runtime then waits for the next `start` with the same shell id.
+        Any other runtime gets the EOF that makes it shut down.
+        """
+        self._meeting.closing.set()
+        self._thread.join(_LIVENESS_MAX_S)
+        if self.kept:
+            self._meeting.detach()
+        else:
+            self._meeting.close()
+
+    def _stop_shell(self):
         try:
             self.shell.stop()
         except Exception:
@@ -365,13 +409,28 @@ class Runtime:
         )
 
 
-def start(command, *, cwd=None, env=None, read_write=(), name="runtime", meeting=None):
+def start(
+    command,
+    *,
+    cwd=None,
+    env=None,
+    read_write=(),
+    name="runtime",
+    meeting=None,
+    shell_id=None,
+):
     """Start `command` as a confined runtime listening on its own rendezvous.
 
     The child is spawned through the workspace jail, with its stdin and stdout
     already wired to the rendezvous. The rendezvous directory is granted to it
     by name. `VIS_LANG_RENDEZVOUS` names that directory for a runtime that wants
     to know where it is.
+
+    With `shell_id`, the runtime is kept: it outlives the Python process that
+    started it, for example a sandbox restart. A later `start` with the same id,
+    command and directory attaches to the live runtime instead of starting one.
+    A live runtime under that id with another command or directory is stopped
+    and replaced.
 
     Args:
         command: Program and arguments for the runtime.
@@ -382,6 +441,7 @@ def start(command, *, cwd=None, env=None, read_write=(), name="runtime", meeting
         meeting: A rendezvous already opened and filled by the caller, for a
             runtime started from a file placed next to its FIFOs. Starting
             takes it over, closing it if the runtime never comes up.
+        shell_id: Shell id that keeps the runtime across processes.
 
     Returns:
         The live `Runtime`.
@@ -390,14 +450,22 @@ def start(command, *, cwd=None, env=None, read_write=(), name="runtime", meeting
         ToolMissing: The program is not installed.
     """
     argv = [str(part) for part in command]
+    if shell_id:
+        found = _attach(str(shell_id), argv, cwd)
+        if found is not None:
+            if meeting is not None:
+                meeting.close()
+            return found
     meeting = meeting or Rendezvous(name).open()
     try:
         if os.sep not in argv[0]:
             tool_path(argv[0])
-        line = (
-            f"exec {shlex.join(argv)} <{shlex.quote(meeting.requests)}"
-            f" >{shlex.quote(meeting.answers)}"
-        )
+        requests = shlex.quote(meeting.requests)
+        answers = shlex.quote(meeting.answers)
+        # A kept runtime holds both FIFOs open itself (descriptors 3 and 4). It
+        # never reads EOF or writes to a closed pipe when this process goes.
+        held = f" 3<>{requests} 4<>{answers}" if shell_id else ""
+        line = f"exec {shlex.join(argv)}{held} <{requests} >{answers}"
         handle = spawn(
             line,
             cwd=cwd,
@@ -408,11 +476,61 @@ def start(command, *, cwd=None, env=None, read_write=(), name="runtime", meeting
             # is meant to outlive its start, so out there it stays unset.
             timeout_s=SPAWN_WAIT_S if is_hosted() else None,
             read_write=[meeting.path, *read_write],
+            shell_id=shell_id,
         )
-        return Runtime(handle, meeting, argv, cwd)
+        return Runtime(handle, meeting, argv, cwd, kept=bool(shell_id))
     except BaseException:
         meeting.close()
         raise
+
+
+def _kept_rendezvous(line, argv):
+    """The rendezvous directory of a kept runtime's shell line for `argv`, or None."""
+    try:
+        words = shlex.split(str(line or ""))
+    except ValueError:
+        return None
+    count = len(argv)
+    if len(words) != count + 5 or words[0] != "exec" or words[1 : count + 1] != argv:
+        return None
+    requests = words[count + 1]
+    if not requests.startswith("3<>"):
+        return None
+    return os.path.dirname(requests[3:])
+
+
+def _same_directory(want, have):
+    if not want or not have:
+        return True
+    return os.path.realpath(str(want)) == os.path.realpath(str(have))
+
+
+def _attach(shell_id, argv, cwd):
+    """The kept runtime that runs `argv` in `cwd` under `shell_id`, or None.
+
+    A live shell under that id that runs something else is stopped, so that
+    the id is free for the new runtime.
+    """
+    try:
+        handle = shell_call()({"op": "logs", "id": shell_id, "offset": -1})
+    except Exception:
+        return None
+    if str(handle.get("status")) != "running":
+        return None
+    path = _kept_rendezvous(handle.get("command"), argv)
+    meeting = None
+    if path and _same_directory(cwd, handle.get("cwd")):
+        try:
+            meeting = Rendezvous(path=path).open()
+        except OSError:
+            meeting = None
+    if meeting is None:
+        try:
+            handle.stop()
+        except Exception:
+            pass
+        return None
+    return Runtime(handle, meeting, argv, cwd, kept=True)
 
 
 __all__ = [
