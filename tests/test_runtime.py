@@ -285,3 +285,66 @@ def test_a_runtime_that_is_not_kept_ends_when_its_process_detaches(tmp_path):
     while live.is_running and time.time() < deadline:
         time.sleep(0.1)
     assert live.is_running is False
+
+
+class _MainThreadOnly:
+    """A shell handle that refuses host calls off the main thread, as Vis does."""
+
+    def __init__(self, handle):
+        self._handle = handle
+
+    def get(self, key, default=None):
+        return self._handle.get(key, default)
+
+    def __getattr__(self, name):
+        found = getattr(self._handle, name)
+        if not callable(found):
+            return found
+
+        def call(*args, **kwargs):
+            if threading.current_thread() is not threading.main_thread():
+                raise RuntimeError("Worker is not authorized for this host session")
+            return found(*args, **kwargs)
+
+        return call
+
+
+def _on_a_thread(work):
+    seen = {}
+
+    def run():
+        try:
+            seen["value"] = work()
+        except BaseException as ex:
+            seen["error"] = ex
+
+    thread = threading.Thread(target=run)
+    thread.start()
+    thread.join(15)
+    if "error" in seen:
+        raise seen["error"]
+    return seen["value"]
+
+
+def test_a_refused_host_call_on_a_thread_is_not_a_dead_runtime(echo):
+    # Blockether/vis#389: a ping from a guest thread found the runtime "dead",
+    # and the stop that followed removed its rendezvous before the child read it.
+    echo.shell = _MainThreadOnly(echo.shell)
+    assert _on_a_thread(lambda: echo.is_running) is True
+    answer = _on_a_thread(lambda: echo.request({"op": "ping"}, 10))
+    assert answer["echo"]["op"] == "ping"
+
+
+def test_an_exited_runtime_is_gone_also_on_a_thread(tmp_path):
+    live = runtime.start(driver(tmp_path, ECHO), cwd=tmp_path, name="test")
+    try:
+        live.shell = _MainThreadOnly(live.shell)
+        with pytest.raises(RuntimeGone):
+            live.request({"op": "quit"}, 10)
+        deadline = time.time() + 5
+        while live.is_running and time.time() < deadline:
+            time.sleep(0.1)
+        assert live.is_running is False
+        assert _on_a_thread(lambda: live.is_running) is False
+    finally:
+        live.stop()

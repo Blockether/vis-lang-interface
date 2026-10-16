@@ -218,11 +218,16 @@ class Runtime:
 
     @property
     def is_running(self):
-        """Whether the runtime is still there, asked of the shell that owns it."""
+        """Whether the runtime is still there, asked of the shell that owns it.
+
+        A failed host call does not mean that the runtime is gone. Vis refuses
+        host calls on a thread that the guest started (Blockether/vis#389). The
+        kernel then says whether the process is still there.
+        """
         try:
             return str(self.shell.logs(-1).get("status")) == "running"
         except Exception:
-            return False
+            return _process_exists(self.pid)
 
     def log_tail(self, lines=LOG_TAIL_LINES):
         """The last lines the runtime printed for itself, blank ones dropped.
@@ -407,6 +412,30 @@ class Runtime:
         return f"the {self.command[0]} runtime{where} stopped before answering" + (
             f"\n{said}" if said else ""
         )
+
+
+def _process_exists(pid):
+    """Whether the kernel knows a process with the id `pid`.
+
+    Args:
+        pid: The process id, as the shell handle carries it.
+
+    Returns:
+        True when the process exists, also when it belongs to another user.
+    """
+    try:
+        number = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if number <= 0:
+        return False
+    try:
+        os.kill(number, 0)
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
 
 
 def start(
