@@ -10,6 +10,12 @@ Each repair uses a separate atomic replacement and checks for concurrent changes
 The block's earlier writes are not transactional and cannot be rolled back.
 Unresolved errors and completed repairs reach the next request through ``ctx``.
 
+Inside Vis, the guard keeps its work off the block's path. The first ``ctx``
+call lists the workspace and builds the file tree in a background thread. After
+a block, a background thread checks and repairs the changed files. The next
+guard call waits for that thread, then stores its report. Background threads
+never call the host.
+
 The guard has no parser. If its parser is unavailable, it allows the operation
 and logs the failure. An unavailable parser never authorizes a repair.
 """
@@ -66,6 +72,8 @@ class SyntaxGuard:
             `vis.workspace_root` by default.
         state: Mapping that keeps the report between calls; `vis.state` by
             default.
+        background: Whether listings and post-block checks run in background
+            threads; by default only inside a Vis host.
     """
 
     def __init__(
@@ -78,6 +86,7 @@ class SyntaxGuard:
         most_files=200,
         workspace_root=None,
         state=None,
+        background=None,
     ):
         self.language = str(language)
         self.suffixes = tuple(str(suffix).lower() for suffix in suffixes)
@@ -92,6 +101,12 @@ class SyntaxGuard:
         self._trees = {}
         self._lock = threading.Lock()
         self._quiet_until = 0.0
+        self._background = process.is_hosted() if background is None else background
+        # Root -> (thread, errors) that builds its tree; the post-block check in flight.
+        self._building = {}
+        self._job = None
+        # Log lines of a background thread, which must not call the host.
+        self._local = threading.local()
 
     def covers(self, path):
         """Whether the parser reads `path`, judged by its name."""
@@ -108,6 +123,8 @@ class SyntaxGuard:
     def before_patch(self, call):
         """Repair a proposed patch, or refuse it if it breaks a parseable file."""
         try:
+            with self._lock:
+                self._settle()
             return self._refusal(call.get("preview"))
         except Exception as error:
             self._log("before patch", error)
@@ -117,6 +134,7 @@ class SyntaxGuard:
         """List the workspace's files before a Python block can change them."""
         try:
             with self._lock:
+                self._settle()
                 self._tree(Path(self._workspace_root()))
         except Exception as error:
             self._log("before python_execution", error)
@@ -127,10 +145,15 @@ class SyntaxGuard:
         try:
             root = Path(self._workspace_root())
             with self._lock:
+                self._settle()
                 if call.get("op") == "patch":
                     if call.get("result") is not None:
                         self._recheck(root, self._patched(call.get("args"), root))
-                elif call.get("result") is not None:
+                elif call.get("result") is None:
+                    pass
+                elif self._background:
+                    self._start_check(root)
+                else:
                     self._recheck(
                         root, self._tree(root).changes(self.covers), repair=True
                     )
@@ -142,6 +165,10 @@ class SyntaxGuard:
         """Session context naming the files under the workspace that do not parse."""
         try:
             root = Path(self._workspace_root())
+            with self._lock:
+                self._settle()
+                if self._background:
+                    self._prewarm(root)
             report = self._report(root)
             repairs = self._state.get(f"{self.language}_syntax_repairs:{root}", [])
         except Exception as error:
@@ -285,7 +312,15 @@ class SyntaxGuard:
 
     def _recheck(self, root, changed, *, repair=False):
         """Parse the `{path: stamp}` files again and store what still does not parse."""
-        report = dict(self._report(root))
+        self._keep(root, *self._rechecked(root, self._report(root), changed, repair))
+
+    def _rechecked(self, root, report, changed, repair):
+        """The new report and repair notes, without the host.
+
+        The repair notes are None when the parser was unavailable after a
+        repair, so the stored notes stay unchanged.
+        """
+        report = dict(report)
         for shown in [
             shown for shown in report if not _absolute(root, shown).is_file()
         ]:
@@ -338,8 +373,7 @@ class SyntaxGuard:
                             sources.pop(shown, None)
                     rows = self._ask(sources, root)
                 if rows is None:
-                    self._store(root, report)
-                    return
+                    return report, None
                 for shown in sources:
                     report.pop(shown, None)
                 for row in rows:
@@ -350,15 +384,81 @@ class SyntaxGuard:
                     }
                 if tree:
                     tree.seen.update(stamps)
+        return report, repairs
+
+    def _keep(self, root, report, repairs):
+        """Store a report and, unless they are None, its repair notes."""
         self._store(root, report)
+        if repairs is None:
+            return
         key = f"{self.language}_syntax_repairs:{root}"
         if repairs:
             self._state[key] = repairs
         elif self._state.get(key):
             del self._state[key]
 
+    def _start_check(self, root):
+        """Check what the block changed in a background thread; `_settle` stores it."""
+        report = self._report(root)
+        tree = self._tree(root)
+        job = {"root": root, "result": None, "logs": []}
+
+        def check():
+            self._local.logs = job["logs"]
+            try:
+                changed = tree.changes(self.covers)
+                job["result"] = self._rechecked(root, report, changed, True)
+            except Exception as error:
+                job["logs"].append(("after python_execution", error))
+
+        job["thread"] = threading.Thread(
+            target=check, name=f"vis-{self.language}-syntax-check", daemon=True
+        )
+        self._job = job
+        job["thread"].start()
+
+    def _settle(self):
+        """Wait for the post-block check in flight, then store its report and logs."""
+        job, self._job = self._job, None
+        if job is None:
+            return
+        job["thread"].join()
+        for where, error in job["logs"]:
+            self._log(where, error)
+        if job["result"] is not None:
+            self._keep(job["root"], *job["result"])
+
+    def _prewarm(self, root):
+        """List `root` here and build its tree in a background thread."""
+        key = str(root)
+        tree = self._trees.get(key)
+        if key in self._building or (
+            tree is not None and time.monotonic() - tree.listed_at <= REFRESH_S
+        ):
+            return
+        files = _listing(root)
+        logs = []
+
+        def build():
+            try:
+                self._trees[key] = _Tree(root, files, self.covers, tree)
+            except Exception as error:
+                logs.append(error)
+
+        thread = threading.Thread(
+            target=build, name=f"vis-{self.language}-syntax-listing", daemon=True
+        )
+        self._building[key] = (thread, logs)
+        thread.start()
+
     def _tree(self, root):
         """The listed files under `root`, listed again when the listing is old."""
+        building = self._building.pop(str(root), None)
+        if building is not None:
+            thread, logs = building
+            thread.join()
+            for error in logs:
+                self._log("listing", error)
         tree = self._trees.get(str(root))
         if tree is None or time.monotonic() - tree.listed_at > REFRESH_S:
             tree = _Tree(root, _listing(root), self.covers, tree)
@@ -380,6 +480,10 @@ class SyntaxGuard:
             del self._state[key]
 
     def _log(self, where, error):
+        logs = getattr(self._local, "logs", None)
+        if logs is not None:
+            logs.append((where, error))
+            return
         try:
             vis.log("warn", f"{self.language} syntax guard, {where}: {error}")
         except Exception:
@@ -396,20 +500,19 @@ class _Tree:
     """
 
     def __init__(self, root, files, covers, previous=None):
-        self.root = Path(root)
+        # Plain strings and os.path: pathlib made one listing hundreds of ms slower.
+        self.root = os.fspath(root)
+        self._inside = os.path.join(self.root, "")
         self.listed_at = time.monotonic()
         self.seen = {}
         self.directories = {}
         known = previous.seen if previous else None
         self._note(self.root)
         for path in files:
+            path = os.fspath(path)
             self._note_parents(path)
             if covers(path):
-                key = str(path)
-                if known is None:
-                    self.seen[key] = _stamp(path)
-                else:
-                    self.seen[key] = known.get(key)
+                self.seen[path] = _stamp(path) if known is None else known.get(path)
 
     def changes(self, covers):
         """`{path: stamp}` for every file the parser reads that changed since seen."""
@@ -419,10 +522,10 @@ class _Tree:
                 del self.directories[directory]
             elif now != stamp:
                 self.directories[directory] = now
-                self._read(Path(directory), covers)
+                self._read(directory, covers)
         changed = {}
         for path, stamp in self.seen.items():
-            now = _stamp(Path(path))
+            now = _stamp(path)
             if now != stamp or stamp is None:
                 changed[path] = now
         return changed
@@ -437,44 +540,69 @@ class _Tree:
         for entry in listed:
             if entry.is_dir(follow_symlinks=False):
                 if entry.path not in self.directories and _walkable(entry.name):
-                    for path in _walked(Path(entry.path), self):
+                    for path in _walked(entry.path, self):
                         if covers(path):
-                            self.seen.setdefault(str(path), None)
+                            self.seen.setdefault(path, None)
             elif covers(entry.name) and entry.path not in self.seen:
                 self.seen[entry.path] = None
 
     def _note(self, directory):
-        key = str(directory)
-        if key not in self.directories:
-            self.directories[key] = _mtime(key)
+        if directory not in self.directories:
+            self.directories[directory] = _mtime(directory)
 
     def _note_parents(self, path):
-        directory = Path(path).parent
-        while directory != self.root and self.root in directory.parents:
-            if str(directory) in self.directories:
+        directory = os.path.dirname(path)
+        while directory.startswith(self._inside):
+            if directory in self.directories:
                 return
             self._note(directory)
-            directory = directory.parent
+            directory = os.path.dirname(directory)
 
 
 def _listing(root):
     """Files under `root` that git sees, tracked or not but never ignored.
 
-    Where git cannot list the tree, a bounded walk that skips hidden and build
-    directories stands in.
+    Inside Vis, the host lists the workspace once for every extension that
+    asks, without a child process. Elsewhere, git runs as a confined child and
+    reads no global config. A jail can refuse the user's ``~/.gitconfig``, and
+    git then lists nothing. Where git cannot list the tree, a bounded walk that
+    skips hidden and build directories stands in.
     """
     root = Path(root)
+    shared = _shared_listing(root)
+    if shared is not None:
+        return shared
     try:
         done = process.run(
             ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
             cwd=root,
             timeout_s=60,
+            env={"GIT_CONFIG_GLOBAL": os.devnull},
         )
         if done.is_ok:
-            return [root / name for name in done.out.split("\0") if name]
+            inside = os.path.join(root, "")
+            return [inside + name for name in done.out.split("\0") if name]
     except (process.ToolMissing, process.ToolTimeout, OSError):
         pass
     return _walked(root)
+
+
+def _shared_listing(root):
+    """The host's listing of the session workspace, or None where it has none.
+
+    The host answers only for its own workspace root, and a host older than
+    `vis.workspace_files` has no listing at all.
+    """
+    listing = getattr(vis, "workspace_files", None)
+    if listing is None or not process.is_hosted():
+        return None
+    try:
+        if Path(vis.workspace_root()) != root:
+            return None
+        files = listing()
+    except Exception:
+        return None
+    return None if files is None else [os.fspath(path) for path in files]
 
 
 def _walked(start, tree=None):
@@ -483,7 +611,7 @@ def _walked(start, tree=None):
     With `tree`, every directory walked is noted there, so later stat calls see
     the entries it gains.
     """
-    found, pending, visited = [], [Path(start)], 0
+    found, pending, visited = [], [os.fspath(start)], 0
     while pending and visited < MOST_ENTRIES:
         directory = pending.pop()
         if tree is not None:
@@ -497,9 +625,9 @@ def _walked(start, tree=None):
             visited += 1
             if entry.is_dir(follow_symlinks=False):
                 if _walkable(entry.name):
-                    pending.append(Path(entry.path))
+                    pending.append(entry.path)
             elif entry.is_file(follow_symlinks=False):
-                found.append(Path(entry.path))
+                found.append(entry.path)
     return found
 
 

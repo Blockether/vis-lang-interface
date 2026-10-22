@@ -3,6 +3,7 @@
 import os
 import runpy
 import shutil
+import threading
 from pathlib import Path
 
 import blockether.vis.extension as vis
@@ -180,6 +181,28 @@ def test_git_decides_which_files_are_watched(guard, parser, tmp_path):
     assert list(parser.calls[-1][0]) == ["src/core.lisp"]
 
 
+def test_git_lists_the_tree_without_the_global_config(tmp_path, monkeypatch):
+    # vis#396: a jail refuses ~/.gitconfig with EPERM, and git then stops before
+    # it lists anything. The guard walked the whole tree instead, ignored build
+    # output included, and the first block under a jail paid for that walk.
+    written(tmp_path, "gen/generated.lisp", "(a")
+    written(tmp_path, "src/core.lisp", "(a)")
+
+    def jailed_git(command, *, cwd=None, env=None, **_):
+        if (env or {}).get("GIT_CONFIG_GLOBAL") != os.devnull:
+            return process.ToolRun(
+                tuple(command),
+                128,
+                "",
+                "fatal: unable to access '~/.gitconfig': Operation not permitted\n",
+                1,
+            )
+        return process.ToolRun(tuple(command), 0, "src/core.lisp\0", "", 1)
+
+    monkeypatch.setattr(process, "run", jailed_git)
+    assert syntax._listing(tmp_path) == [str(tmp_path / "src/core.lisp")]
+
+
 def test_one_pass_parses_at_most_most_files_and_the_rest_wait(tmp_path, parser):
     guard = SyntaxGuard(
         "lisp",
@@ -311,3 +334,76 @@ def test_a_new_file_in_an_unwatched_directory_is_found_on_the_next_listing(
         "lisp_syntax_errors": ["empty/late.lisp:1:1: EOF while reading"]
     }
     assert os.path.isdir(empty)
+
+
+class HostState(dict):
+    """A state mapping that records which threads read or write it."""
+
+    def __init__(self):
+        super().__init__()
+        self.threads = set()
+
+    def get(self, key, default=None):
+        self.threads.add(threading.get_ident())
+        return super().get(key, default)
+
+    def __setitem__(self, key, value):
+        self.threads.add(threading.get_ident())
+        super().__setitem__(key, value)
+
+    def __delitem__(self, key):
+        self.threads.add(threading.get_ident())
+        super().__delitem__(key)
+
+
+@pytest.fixture
+def background(tmp_path, parser):
+    return SyntaxGuard(
+        "lisp",
+        (".lisp",),
+        parser,
+        workspace_root=lambda: tmp_path,
+        state=HostState(),
+        background=True,
+    )
+
+
+def test_the_first_context_builds_the_tree_in_the_background(background, tmp_path):
+    # vis#396: the first block waited for the listing; now the context starts it.
+    written(tmp_path, "src/core.lisp", "(a)")
+    assert background.ctx() == {}
+    assert str(tmp_path) in background._building
+    background.before_block(block())
+    assert background._building == {}
+    assert str(tmp_path / "src/core.lisp") in background._trees[str(tmp_path)].seen
+
+
+def test_a_block_is_checked_in_the_background_and_reported_next(
+    background, parser, tmp_path
+):
+    # vis#396: the post-block check runs behind the block; the next call waits for it.
+    background.ctx()
+    background.before_block(block())
+    written(tmp_path, "src/core.lisp", "(a")
+    background.after_edit(block())
+    assert background.ctx() == {
+        "lisp_syntax_errors": ["src/core.lisp:1:1: EOF while reading"]
+    }
+    assert len(parser.calls) == 1
+
+
+def test_background_threads_never_call_the_host(
+    background, parser, tmp_path, monkeypatch
+):
+    logged = []
+    monkeypatch.setattr(
+        vis, "log", lambda level, text: logged.append(threading.get_ident())
+    )
+    background.ctx()
+    background.before_block(block())
+    written(tmp_path, "a.lisp", "(")
+    parser.error = RuntimeError("busy")
+    background.after_edit(block())
+    background.ctx()
+    assert logged == [threading.get_ident()]
+    assert background._state.threads == {threading.get_ident()}

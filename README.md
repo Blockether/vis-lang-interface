@@ -117,6 +117,10 @@ vis.register_extension(vis.Extension(..., op_hooks=guard.op_hooks(), ctx=guard.c
 - The guard watches tracked and untracked workspace files, but skips ignored files.
   If Git cannot list files, it walks the workspace and skips hidden and build directories.
   Between listings, file and directory stat calls find changes without a process.
+- Inside Vis, the guard uses the host's shared `vis.workspace_files()` listing when the host has it.
+  The first `ctx` call starts the listing, so the first block does not wait for it.
+  After a block, the check and its repairs run in the background. The next guard call waits for them,
+  so `ctx` always reports a finished check. Pass `background=False` to check before the hook returns.
 - If the parser is unavailable, the guard allows the operation, logs the failure and waits two minutes before retrying.
   It never accepts a repair without successful validation.
 
