@@ -3,3 +3,7 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 *.log
+
+# Local build and uv artefacts. Consumers pin this library as a Git dependency.
+*.egg-info/
+uv.lock
