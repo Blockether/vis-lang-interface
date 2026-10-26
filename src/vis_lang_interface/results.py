@@ -140,6 +140,57 @@ class TestResult:
 
 
 @dataclass(frozen=True)
+class FileCoverage:
+    """How much of one source file the tests ran."""
+
+    path: Annotated[str, "Source file, as the coverage tool names it."]
+    covered: Annotated[int, "Measured points that ran: lines, or expressions."]
+    total: Annotated[int, "Measured points in the file."]
+
+    @property
+    def percent(self) -> float:
+        """Covered share in percent; 0 when the file has nothing to measure."""
+        return round(100.0 * self.covered / self.total, 1) if self.total else 0.0
+
+
+@dataclass(frozen=True)
+class CoverageResult:
+    """Test coverage from one instrumented test run."""
+
+    language: Annotated[str, "Language whose tests ran."]
+    unit: Annotated[str, "What the tool counts: lines, or expressions."]
+    covered: Annotated[int, "Measured points that ran, over all files."]
+    total: Annotated[int, "Measured points over all files."]
+    files: Annotated[tuple[FileCoverage, ...], "Measured files, least covered first."]
+    report: Annotated[str, "Report file the run wrote, for other tools to read."]
+    tests: Annotated[TestResult, "The test run that produced the coverage."]
+
+    @property
+    def percent(self) -> float:
+        """Covered share in percent; 0 when nothing was measured."""
+        return round(100.0 * self.covered / self.total, 1) if self.total else 0.0
+
+    @property
+    def is_passed(self) -> bool:
+        """Whether the test run that measured the coverage passed."""
+        return self.tests.is_passed
+
+    @classmethod
+    def of(cls, language, unit, files, *, report="", tests):
+        """A result whose totals are the sums of `files`, least covered first."""
+        files = tuple(sorted(files, key=lambda f: (f.percent, -f.total, f.path)))
+        return cls(
+            language,
+            unit,
+            sum(int(f.covered) for f in files),
+            sum(int(f.total) for f in files),
+            files,
+            str(report),
+            tests,
+        )
+
+
+@dataclass(frozen=True)
 class BuildArtifact:
     """One file a build produced."""
 

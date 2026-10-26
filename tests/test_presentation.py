@@ -6,7 +6,9 @@ import pytest
 from vis_lang_interface import (
     BuildArtifact,
     BuildResult,
+    CoverageResult,
     Diagnostic,
+    FileCoverage,
     FormatResult,
     LintResult,
     ReplResult,
@@ -536,3 +538,50 @@ def test_checks_render_on_hosts_without_verdicts(monkeypatch):
     shown = _tests(1)
     assert shown.summary == "1 failed, 1 passed in 0.0 s"
     assert "verdict" not in shown.to_wire()
+
+
+def _coverage_run(failures=()):
+    failed = len(failures)
+    return TestResult.of(
+        "clojure",
+        total=3,
+        passed=3 - failed,
+        failed=failed,
+        skipped=0,
+        duration_ms=10,
+        failures=failures,
+    )
+
+
+def test_coverage_shows_the_share_and_the_least_covered_files():
+    shown = presentation.coverage_presentation(
+        "Measure Clojure coverage",
+        CoverageResult.of(
+            "clojure",
+            "expressions",
+            [FileCoverage("app/a.clj", 3, 4), FileCoverage("app/b.clj", 0, 4)],
+            report="target/coverage/clofidence.json",
+            tests=_coverage_run(),
+        ),
+    )
+    assert shown.summary == "37.5% of 8 expressions · 3 passed"
+    table = _table(shown.content[0])
+    assert table.columns == ("File", "Covered", "Expressions")
+    assert table.rows[0] == ("app/b.clj", "0.0%", "0/4")
+    assert _text(shown.content[1]).text == "Report: target/coverage/clofidence.json"
+    assert shown.sections == ()
+
+
+def test_coverage_of_a_failed_run_shows_each_failing_test():
+    shown = presentation.coverage_presentation(
+        "Measure Clojure coverage",
+        CoverageResult.of(
+            "clojure",
+            "expressions",
+            [],
+            tests=_coverage_run([TestFailure("adds", "a_test.clj", 3, "boom")]),
+        ),
+    )
+    assert shown.summary == "no expressions measured · 1 failed, 2 passed"
+    assert shown.content == ()
+    assert [section.headline for section in shown.sections] == ["adds"]

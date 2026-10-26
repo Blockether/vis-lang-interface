@@ -58,3 +58,8 @@ def test_an_unknown_verb_is_refused():
 def test_an_extension_that_serves_nothing_is_refused():
     with pytest.raises(ValueError, match="at least one verb"):
         prompt.routing("Clojure", "clj", ())
+
+
+def test_coverage_is_a_toolchain_verb_listed_after_the_test_run():
+    block = prompt.routing("Clojure", "clj", ("coverage", "run_tests", "repl_eval"))
+    assert block.splitlines()[1] == "  clj.run_tests · clj.coverage"

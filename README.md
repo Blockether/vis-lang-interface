@@ -28,7 +28,7 @@ def lint(paths):
 
 | Module | What it gives you |
 | --- | --- |
-| `vis_lang_interface.results` | `Diagnostic`, `FormatResult`, `LintResult`, `SyntaxResult`, `TestResult`, `TestFailure`, `BuildResult`, `BuildArtifact`, `ReplResult`, `ReplSession` |
+| `vis_lang_interface.results` | `Diagnostic`, `FormatResult`, `LintResult`, `SyntaxResult`, `TestResult`, `TestFailure`, `CoverageResult`, `FileCoverage`, `BuildResult`, `BuildArtifact`, `ReplResult`, `ReplSession` |
 | `vis_lang_interface.changes` | `line_changes` — the lines an edit added and removed, as `git diff --minimal --numstat` counts them |
 | `vis_lang_interface.process` | `run`, `spawn`, `tool_path`, `ToolRun`, `ToolMissing`, `ToolTimeout` |
 | `vis_lang_interface.runtime` | `start`, `Runtime`, `Rendezvous`, `RuntimeGone` — a runtime that stays alive between calls |

@@ -297,6 +297,42 @@ def test_presentation(label, result):
     return _checks(label, summary, content, sections, is_passed=result.is_passed)
 
 
+def coverage_presentation(label, result):
+    """Presentation for a `CoverageResult`: the share covered, the least covered files.
+
+    The verdict is the test run's own. Failing tests appear as sections, as in a
+    test run, because coverage from a red run is not the suite's coverage.
+    """
+    measured = f"{result.percent:.1f}% of {result.total} {result.unit}"
+    if not result.total:
+        measured = f"no {result.unit} measured"
+    summary = f"{measured} · {_test_counts(result.tests)}"
+    content = []
+    if result.files:
+        rows = tuple(
+            (row.path, f"{row.percent:.1f}%", f"{row.covered}/{row.total}")
+            for row in result.files[:MAX_ROWS]
+        )
+        content.append(
+            vis.ActivityTable(("File", "Covered", result.unit.capitalize()), rows)
+        )
+        if len(result.files) > MAX_ROWS:
+            content.append(
+                vis.ActivityText(
+                    f"Showing the {MAX_ROWS} least covered of {_files(len(result.files))}."
+                )
+            )
+    if result.report:
+        content.append(vis.ActivityText(f"Report: {result.report}"))
+    tests = result.tests
+    sections = tuple(
+        _failure_section(failure) for failure in tests.failures[:MAX_SECTIONS]
+    )
+    if not tests.failures and not tests.is_passed and tests.output:
+        content.append(vis.ActivityCode(_clip(tests.output)))
+    return _checks(label, summary, tuple(content), sections, is_passed=result.is_passed)
+
+
 def build_presentation(label, result):
     """Presentation for a `BuildResult`."""
     seconds = result.duration_ms / 1000

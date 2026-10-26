@@ -5,7 +5,9 @@ import pytest
 from vis_lang_interface import (
     BuildArtifact,
     BuildResult,
+    CoverageResult,
     Diagnostic,
+    FileCoverage,
     LintResult,
     SyntaxResult,
     TestFailure,
@@ -97,3 +99,33 @@ def test_syntax_result_is_clean_only_without_diagnostics():
     assert (clean.is_clean, clean.files, clean.diagnostics) == (True, 4, ())
     assert broken.is_clean is False
     assert broken.diagnostics[0].path == "src/a.clj"
+
+
+def _run(failed=0):
+    return TestResult.of(
+        "clojure", total=4, passed=4 - failed, failed=failed, skipped=0, duration_ms=10
+    )
+
+
+def test_coverage_result_sums_files_least_covered_first():
+    result = CoverageResult.of(
+        "clojure",
+        "expressions",
+        [
+            FileCoverage("app/a.clj", 9, 10),
+            FileCoverage("app/b.clj", 1, 4),
+            FileCoverage("app/c.clj", 0, 0),
+        ],
+        report="target/coverage/clofidence.json",
+        tests=_run(),
+    )
+    assert (result.covered, result.total, result.percent) == (10, 14, 71.4)
+    assert [f.path for f in result.files] == ["app/c.clj", "app/b.clj", "app/a.clj"]
+    assert result.files[1].percent == 25.0
+    assert result.is_passed is True
+
+
+def test_coverage_result_takes_its_verdict_from_the_tests():
+    result = CoverageResult.of("clojure", "expressions", [], tests=_run(failed=1))
+    assert (result.total, result.percent, result.files) == (0, 0.0, ())
+    assert result.is_passed is False
