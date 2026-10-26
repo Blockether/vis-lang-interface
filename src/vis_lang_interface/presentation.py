@@ -326,7 +326,8 @@ def _gap_section(row):
         )
         for gap in shown
     )
-    content = [vis.ActivityTable(("Line", "Kind", "Never ran"), rows)]
+    content = []
+    content.append(vis.ActivityTable(("Line", "Kind", "Never ran"), rows))
     if len(row.gaps) > len(shown):
         content.append(
             vis.ActivityText(f"Showing the first {len(shown)} of {len(row.gaps)} gaps.")
