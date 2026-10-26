@@ -35,6 +35,7 @@ from vis_lang_interface.project import project_root, source_files, string_list
 from vis_lang_interface.results import (
     BuildArtifact,
     BuildResult,
+    CoverageGap,
     CoverageResult,
     Diagnostic,
     FileCoverage,
@@ -51,6 +52,7 @@ from vis_lang_interface.runtime import Rendezvous, Runtime, RuntimeGone
 __all__ = [
     "BuildArtifact",
     "BuildResult",
+    "CoverageGap",
     "CoverageResult",
     "Diagnostic",
     "FileCoverage",

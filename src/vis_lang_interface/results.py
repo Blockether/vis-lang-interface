@@ -99,6 +99,86 @@ class TestFailure:
 
 
 @dataclass(frozen=True)
+class CoverageGap:
+    """One place in a source file that the tests never ran."""
+
+    line: Annotated[int, "1-based first line, or 0 when the tool located nothing."]
+    end_line: Annotated[int, "1-based last line; equal to `line` for one line."]
+    kind: Annotated[
+        str,
+        "`line`, `branch` (a branch of a decision never ran) or `expression`.",
+    ]
+    detail: Annotated[str, "What never ran, such as the source text or `12 -> 14`."]
+
+
+@dataclass(frozen=True)
+class FileCoverage:
+    """How much of one source file the tests ran, and where they did not."""
+
+    path: Annotated[str, "Source file, as the coverage tool names it."]
+    covered: Annotated[int, "Measured points that ran: lines, or expressions."]
+    total: Annotated[int, "Measured points in the file."]
+    branches_covered: Annotated[int, "Branches that ran; 0 without branch data."] = 0
+    branches_total: Annotated[int, "Measured branches; 0 without branch data."] = 0
+    gaps: Annotated[
+        tuple[CoverageGap, ...], "Places that never ran, in line order."
+    ] = ()
+
+    @property
+    def percent(self) -> float:
+        """Covered share in percent; 0 when the file has nothing to measure."""
+        return round(100.0 * self.covered / self.total, 1) if self.total else 0.0
+
+    @property
+    def branch_percent(self) -> float | None:
+        """Covered branch share in percent; None without branch data."""
+        if not self.branches_total:
+            return None
+        return round(100.0 * self.branches_covered / self.branches_total, 1)
+
+
+@dataclass(frozen=True)
+class CoverageResult:
+    """The coverage of one instrumented test run."""
+
+    language: Annotated[str, "Language whose tests ran."]
+    unit: Annotated[str, "What the tool counts: lines, or expressions."]
+    covered: Annotated[int, "Measured points that ran, over all files."]
+    total: Annotated[int, "Measured points over all files."]
+    files: Annotated[tuple[FileCoverage, ...], "Measured files, least covered first."]
+    report: Annotated[str, "Report file the run wrote, for other tools to read."] = ""
+    branches_covered: Annotated[int, "Branches that ran, over all files."] = 0
+    branches_total: Annotated[int, "Measured branches over all files."] = 0
+
+    @property
+    def percent(self) -> float:
+        """Covered share in percent; 0 when nothing was measured."""
+        return round(100.0 * self.covered / self.total, 1) if self.total else 0.0
+
+    @property
+    def branch_percent(self) -> float | None:
+        """Covered branch share in percent; None without branch data."""
+        if not self.branches_total:
+            return None
+        return round(100.0 * self.branches_covered / self.branches_total, 1)
+
+    @classmethod
+    def of(cls, language, unit, files, *, report=""):
+        """A result whose totals are the sums of `files`, least covered first."""
+        files = tuple(sorted(files, key=lambda f: (f.percent, -f.total, f.path)))
+        return cls(
+            language,
+            unit,
+            sum(int(f.covered) for f in files),
+            sum(int(f.total) for f in files),
+            files,
+            str(report),
+            sum(int(f.branches_covered) for f in files),
+            sum(int(f.branches_total) for f in files),
+        )
+
+
+@dataclass(frozen=True)
 class TestResult:
     """A test run, counted the way the runner counted it."""
 
@@ -111,6 +191,9 @@ class TestResult:
     failures: Annotated[tuple[TestFailure, ...], "The failing tests."]
     output: Annotated[str, "Tail of the runner's own output."] = ""
     is_passed: Annotated[bool, "Whether the run finished with no failure."] = False
+    coverage: Annotated[
+        CoverageResult | None, "Coverage of the run; None unless it was asked for."
+    ] = None
 
     @classmethod
     def of(
@@ -124,6 +207,7 @@ class TestResult:
         duration_ms,
         failures=(),
         output="",
+        coverage=None,
     ):
         """A result that passes exactly when nothing failed."""
         return cls(
@@ -136,57 +220,7 @@ class TestResult:
             tuple(failures),
             output,
             int(failed) == 0,
-        )
-
-
-@dataclass(frozen=True)
-class FileCoverage:
-    """How much of one source file the tests ran."""
-
-    path: Annotated[str, "Source file, as the coverage tool names it."]
-    covered: Annotated[int, "Measured points that ran: lines, or expressions."]
-    total: Annotated[int, "Measured points in the file."]
-
-    @property
-    def percent(self) -> float:
-        """Covered share in percent; 0 when the file has nothing to measure."""
-        return round(100.0 * self.covered / self.total, 1) if self.total else 0.0
-
-
-@dataclass(frozen=True)
-class CoverageResult:
-    """Test coverage from one instrumented test run."""
-
-    language: Annotated[str, "Language whose tests ran."]
-    unit: Annotated[str, "What the tool counts: lines, or expressions."]
-    covered: Annotated[int, "Measured points that ran, over all files."]
-    total: Annotated[int, "Measured points over all files."]
-    files: Annotated[tuple[FileCoverage, ...], "Measured files, least covered first."]
-    report: Annotated[str, "Report file the run wrote, for other tools to read."]
-    tests: Annotated[TestResult, "The test run that produced the coverage."]
-
-    @property
-    def percent(self) -> float:
-        """Covered share in percent; 0 when nothing was measured."""
-        return round(100.0 * self.covered / self.total, 1) if self.total else 0.0
-
-    @property
-    def is_passed(self) -> bool:
-        """Whether the test run that measured the coverage passed."""
-        return self.tests.is_passed
-
-    @classmethod
-    def of(cls, language, unit, files, *, report="", tests):
-        """A result whose totals are the sums of `files`, least covered first."""
-        files = tuple(sorted(files, key=lambda f: (f.percent, -f.total, f.path)))
-        return cls(
-            language,
-            unit,
-            sum(int(f.covered) for f in files),
-            sum(int(f.total) for f in files),
-            files,
-            str(report),
-            tests,
+            coverage,
         )
 
 

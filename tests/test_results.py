@@ -5,6 +5,7 @@ import pytest
 from vis_lang_interface import (
     BuildArtifact,
     BuildResult,
+    CoverageGap,
     CoverageResult,
     Diagnostic,
     FileCoverage,
@@ -101,31 +102,51 @@ def test_syntax_result_is_clean_only_without_diagnostics():
     assert broken.diagnostics[0].path == "src/a.clj"
 
 
-def _run(failed=0):
-    return TestResult.of(
-        "clojure", total=4, passed=4 - failed, failed=failed, skipped=0, duration_ms=10
-    )
-
-
-def test_coverage_result_sums_files_least_covered_first():
+def test_coverage_result_sums_files_and_branches_least_covered_first():
     result = CoverageResult.of(
-        "clojure",
-        "expressions",
+        "python",
+        "lines",
         [
-            FileCoverage("app/a.clj", 9, 10),
-            FileCoverage("app/b.clj", 1, 4),
-            FileCoverage("app/c.clj", 0, 0),
+            FileCoverage("app/a.py", 9, 10, 3, 4),
+            FileCoverage("app/b.py", 1, 4, 0, 2, (CoverageGap(2, 4, "line", "x = 1"),)),
+            FileCoverage("app/c.py", 0, 0),
         ],
-        report="target/coverage/clofidence.json",
-        tests=_run(),
+        report="coverage.json",
     )
     assert (result.covered, result.total, result.percent) == (10, 14, 71.4)
-    assert [f.path for f in result.files] == ["app/c.clj", "app/b.clj", "app/a.clj"]
-    assert result.files[1].percent == 25.0
-    assert result.is_passed is True
+    assert (result.branches_covered, result.branches_total, result.branch_percent) == (
+        3,
+        6,
+        50.0,
+    )
+    assert [f.path for f in result.files] == ["app/c.py", "app/b.py", "app/a.py"]
+    assert result.files[1].percent == 25.0 and result.files[1].branch_percent == 0.0
+    assert result.files[0].branch_percent is None
+    assert result.files[1].gaps[0].kind == "line"
 
 
-def test_coverage_result_takes_its_verdict_from_the_tests():
-    result = CoverageResult.of("clojure", "expressions", [], tests=_run(failed=1))
-    assert (result.total, result.percent, result.files) == (0, 0.0, ())
-    assert result.is_passed is False
+def test_coverage_result_without_files_measures_nothing():
+    result = CoverageResult.of("clojure", "expressions", [])
+    assert (result.total, result.percent, result.branch_percent, result.files) == (
+        0,
+        0.0,
+        None,
+        (),
+    )
+
+
+def test_a_test_run_carries_its_coverage_only_when_asked():
+    plain = TestResult.of(
+        "python", total=1, passed=1, failed=0, skipped=0, duration_ms=1
+    )
+    measured = CoverageResult.of("python", "lines", [FileCoverage("a.py", 1, 2)])
+    covered = TestResult.of(
+        "python",
+        total=1,
+        passed=1,
+        failed=0,
+        skipped=0,
+        duration_ms=1,
+        coverage=measured,
+    )
+    assert plain.coverage is None and covered.coverage is measured and covered.is_passed

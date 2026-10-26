@@ -60,6 +60,7 @@ def test_an_extension_that_serves_nothing_is_refused():
         prompt.routing("Clojure", "clj", ())
 
 
-def test_coverage_is_a_toolchain_verb_listed_after_the_test_run():
-    block = prompt.routing("Clojure", "clj", ("coverage", "run_tests", "repl_eval"))
-    assert block.splitlines()[1] == "  clj.run_tests · clj.coverage"
+def test_coverage_is_part_of_the_test_run_not_a_verb():
+    assert "coverage" not in prompt.VERBS
+    with pytest.raises(ValueError):
+        prompt.routing("Clojure", "clj", ("coverage", "run_tests"))

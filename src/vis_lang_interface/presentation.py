@@ -277,59 +277,89 @@ def _failure_section(failure):
     return vis.ActivitySection(headline, summary or "no message", content)
 
 
+def _coverage_said(coverage):
+    """`87.3% of 563 expressions, 71.4% of 42 branches`, or that nothing was measured."""
+    if not coverage.total:
+        return f"no {coverage.unit} measured"
+    said = f"{coverage.percent:.1f}% of {coverage.total} {coverage.unit}"
+    if coverage.branches_total:
+        noun = "branch" if coverage.branches_total == 1 else "branches"
+        said += f", {coverage.branch_percent:.1f}% of {coverage.branches_total} {noun}"
+    return said
+
+
+def _coverage_content(coverage):
+    """The least covered files as a table, and the report that the run wrote."""
+    content = []
+    branches = any(row.branches_total for row in coverage.files)
+    if coverage.files:
+        rows = tuple(
+            (row.path, f"{row.percent:.1f}%", f"{row.covered}/{row.total}")
+            + ((f"{row.branches_covered}/{row.branches_total}",) if branches else ())
+            for row in coverage.files[:MAX_ROWS]
+        )
+        columns = ("File", "Covered", coverage.unit.capitalize())
+        content.append(
+            vis.ActivityTable(columns + (("Branches",) if branches else ()), rows)
+        )
+        if len(coverage.files) > MAX_ROWS:
+            content.append(
+                vis.ActivityText(
+                    f"Showing the {MAX_ROWS} least covered of {_files(len(coverage.files))}."
+                )
+            )
+    if coverage.report:
+        content.append(vis.ActivityText(f"Report: {coverage.report}"))
+    return content
+
+
+def _gap_section(row):
+    """The places of one file that the tests never ran, in line order."""
+    shown = row.gaps[:MAX_FINDINGS]
+    rows = tuple(
+        (
+            f"{gap.line}-{gap.end_line}"
+            if gap.end_line > gap.line
+            else str(gap.line or ""),
+            gap.kind,
+            _line(gap.detail),
+        )
+        for gap in shown
+    )
+    content = [vis.ActivityTable(("Line", "Kind", "Never ran"), rows)]
+    if len(row.gaps) > len(shown):
+        content.append(
+            vis.ActivityText(f"Showing the first {len(shown)} of {len(row.gaps)} gaps.")
+        )
+    summary = f"{_count(len(row.gaps), 'gap')} · {row.percent:.1f}% covered"
+    return vis.ActivitySection(row.path, summary, tuple(content))
+
+
 def test_presentation(label, result):
     """Presentation for a `TestResult`, one section per failing test.
 
     A passing run's own output only repeats its counts. So the output appears
     only for a failed run that named no failing test, where it is the evidence.
+    A run with coverage adds the share to the summary, a table of the least
+    covered files, and one section for each file with the places that never ran.
     """
     summary = f"{_test_counts(result)} in {result.duration_ms / 1000:.1f} s"
     shown = result.failures[:MAX_SECTIONS]
     sections = tuple(_failure_section(failure) for failure in shown)
-    content = ()
+    content = []
     if len(shown) < len(result.failures):
         note = (
             f"Showing the first {len(shown)} of {len(result.failures)} failing tests."
         )
-        content = (vis.ActivityText(note),)
+        content.append(vis.ActivityText(note))
     elif not result.failures and not result.is_passed and result.output:
-        content = (vis.ActivityCode(_clip(result.output)),)
-    return _checks(label, summary, content, sections, is_passed=result.is_passed)
-
-
-def coverage_presentation(label, result):
-    """Presentation for a `CoverageResult`: the share covered, the least covered files.
-
-    The verdict is the test run's own. Failing tests appear as sections, as in a
-    test run, because coverage from a red run is not the suite's coverage.
-    """
-    measured = f"{result.percent:.1f}% of {result.total} {result.unit}"
-    if not result.total:
-        measured = f"no {result.unit} measured"
-    summary = f"{measured} · {_test_counts(result.tests)}"
-    content = []
-    if result.files:
-        rows = tuple(
-            (row.path, f"{row.percent:.1f}%", f"{row.covered}/{row.total}")
-            for row in result.files[:MAX_ROWS]
-        )
-        content.append(
-            vis.ActivityTable(("File", "Covered", result.unit.capitalize()), rows)
-        )
-        if len(result.files) > MAX_ROWS:
-            content.append(
-                vis.ActivityText(
-                    f"Showing the {MAX_ROWS} least covered of {_files(len(result.files))}."
-                )
-            )
-    if result.report:
-        content.append(vis.ActivityText(f"Report: {result.report}"))
-    tests = result.tests
-    sections = tuple(
-        _failure_section(failure) for failure in tests.failures[:MAX_SECTIONS]
-    )
-    if not tests.failures and not tests.is_passed and tests.output:
-        content.append(vis.ActivityCode(_clip(tests.output)))
+        content.append(vis.ActivityCode(_clip(result.output)))
+    coverage = result.coverage
+    if coverage is not None:
+        summary += f" · {_coverage_said(coverage)}"
+        content += _coverage_content(coverage)
+        gapped = [row for row in coverage.files if row.gaps]
+        sections += tuple(_gap_section(row) for row in gapped[:MAX_ROWS])
     return _checks(label, summary, tuple(content), sections, is_passed=result.is_passed)
 
 
