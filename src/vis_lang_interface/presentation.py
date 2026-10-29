@@ -255,7 +255,7 @@ def _test_counts(result):
 
 
 def _failure_section(failure):
-    """One failing test: where and why on one line, the details behind it.
+    """One failing test: its file and why on one line, the details behind it.
 
     The first line of the message is the reason, and it already sits in the
     summary. So the section holds only what follows it, such as the expected and
@@ -263,9 +263,11 @@ def _failure_section(failure):
     """
     message = textwrap.dedent(failure.message).strip()
     reason, _, details = message.partition("\n")
-    said = " · ".join(
-        part for part in (_location(failure.path, failure.line), reason.strip()) if part
-    )
+    # The row is narrow, and the file name is the part of a path that a reader
+    # needs there. The whole path stays one press away, in the details.
+    location = _location(failure.path, failure.line)
+    named = _location(posixpath.basename(failure.path), failure.line)
+    said = " · ".join(part for part in (named, reason.strip()) if part)
     summary = _line(said)
     if summary != _flat(said):
         content = (vis.ActivityCode(_clip(message)),)
@@ -273,6 +275,8 @@ def _failure_section(failure):
         content = (vis.ActivityCode(_clip(textwrap.dedent(details))),)
     else:
         content = ()
+    if location != named:
+        content = (vis.ActivityText(location), *content)
     headline = _tail(failure.test) or _line(failure.path) or "Unnamed test"
     return vis.ActivitySection(headline, summary or "no message", content)
 

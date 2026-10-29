@@ -312,6 +312,33 @@ def test_a_long_nested_test_name_keeps_its_own_case():
     assert [_text(block).text for block in section.content] == ["Actual: false"]
 
 
+# User report 2026-10-29: the whole test path filled a phone row, so the reason
+# why the test failed never showed.
+def test_a_failure_row_names_its_file_and_keeps_the_path_behind_it():
+    result = TestResult.of(
+        "clojure",
+        total=1,
+        passed=0,
+        failed=1,
+        skipped=0,
+        duration_ms=5,
+        failures=[
+            TestFailure(
+                "keeps the readable path",
+                "test/com/blockether/spel/daemon_test.clj",
+                89,
+                "Expected: (= 102 n)\nActual: false",
+            )
+        ],
+    )
+    (section,) = presentation.test_presentation("Run Clojure tests", result).sections
+    assert section.summary == "daemon_test.clj:89 · Expected: (= 102 n)"
+    assert [_text(block).text for block in section.content] == [
+        "test/com/blockether/spel/daemon_test.clj:89",
+        "Actual: false",
+    ]
+
+
 def test_build_lists_its_artifacts():
     shown = presentation.build_presentation(
         "Build Python package",
