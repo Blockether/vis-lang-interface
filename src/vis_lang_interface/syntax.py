@@ -210,8 +210,8 @@ class SyntaxGuard:
             return None
         row = broken[0]
         reason = (
-            f"{_location(row)}: {row.message}. This patch would make {path} "
-            f"unparseable, so nothing was written."
+            f"{_location(row, path)}: {row.message}. This patch would make the file "
+            "unparseable, so nothing was written."
         )
         hint = (
             f"The file parses now. Change the edits so that the {self.language} "
@@ -664,9 +664,9 @@ def _absolute(root, shown):
     return path if path.is_absolute() else Path(root) / path
 
 
-def _location(row):
+def _location(row, path):
     """`path:line:column`, leaving out what the parser did not locate."""
-    parts = [row.path or "<source>"]
+    parts = [row.path or path]
     if row.line:
         parts.append(str(row.line))
         if row.column:

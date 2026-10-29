@@ -69,6 +69,8 @@ def test_a_patch_that_breaks_a_parseable_file_is_refused(guard):
     assert refusal["marker"] == "block"
     assert refusal["reason"].startswith("src/core.lisp:2:1: EOF while reading.")
     assert "nothing was written" in refusal["reason"]
+    # User report: the refusal named the file twice, once in its location.
+    assert refusal["reason"].count("src/core.lisp") == 1
     assert "patch again" in refusal.get("hint", refusal["reason"])
 
 
