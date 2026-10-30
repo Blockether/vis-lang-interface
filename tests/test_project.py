@@ -1,10 +1,11 @@
 """Finding the project directory, its source files and list arguments."""
 
+import inspect
 from pathlib import Path
 
 import pytest
 
-from vis_lang_interface import source_files, string_list
+from vis_lang_interface import PATH_ALIASES, aliased, source_files, string_list
 
 
 def test_one_bare_string_is_one_entry():
@@ -62,3 +63,29 @@ def test_source_files_reads_one_file_and_refuses_a_missing_one(tmp_path):
     assert source_files([one], (".py",)) == (one.resolve(),)
     with pytest.raises(FileNotFoundError):
         source_files([tmp_path / "missing.py"], (".py",))
+
+
+def _tests(paths=(), *, vars=()):
+    """A stand-in tool: what it was called with."""
+    return paths, vars
+
+
+aliased_tests = aliased(**PATH_ALIASES, var="vars")(_tests)
+
+
+def test_an_alias_reaches_the_parameter_that_it_names():
+    # Session bc998dd0-96cb-4d7f-8b64-b4bffeafc6f4: `clj.run_tests(path=..., var=...)`
+    # failed with a TypeError for each singular, before any test ran.
+    assert aliased_tests(path="t", var="a/b") == ("t", "a/b")  # pyright: ignore[reportCallIssue]
+    assert aliased_tests(["t"], vars=["a/b"]) == (["t"], ["a/b"])
+
+
+def test_an_alias_with_its_parameter_is_refused():
+    with pytest.raises(TypeError, match="vars twice, as 'var' and as 'vars'"):
+        aliased_tests(var="a/b", vars=["a/c"])  # pyright: ignore[reportCallIssue]
+
+
+def test_an_unknown_keyword_still_fails_and_the_signature_keeps_real_names():
+    with pytest.raises(TypeError, match="unexpected keyword argument 'tests'"):
+        aliased_tests(tests=["a/b"])  # pyright: ignore[reportCallIssue]
+    assert list(inspect.signature(aliased_tests).parameters) == ["paths", "vars"]

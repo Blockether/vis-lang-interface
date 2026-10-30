@@ -1,10 +1,16 @@
-"""Finding the project a tool should run in, and the files it should read."""
+"""Finding the project a tool should run in, the files it should read, and its arguments."""
 
 from __future__ import annotations
 
+import functools
 import os
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
+from types import MappingProxyType
+from typing import ParamSpec, TypeVar
+
+P = ParamSpec("P")
+R = TypeVar("R")
 
 IGNORED_DIRECTORIES = frozenset(
     {
@@ -85,6 +91,46 @@ def _string(one):
         if isinstance(named, str):
             return named
     raise TypeError(f"expected a string or a path, got {type(one).__name__}")
+
+
+# The spellings of `paths` that a caller types for a file tool: one file or a list.
+PATH_ALIASES = MappingProxyType({"path": "paths", "file": "paths", "files": "paths"})
+
+
+def aliased(**spellings: str) -> Callable[[Callable[P, R]], Callable[P, R]]:
+    """Accept each keyword in `spellings` as the parameter that it names.
+
+    A caller types `path=` for `paths=` or `var=` for `vars=`, and types it again
+    in the next call. A failed call for a plural is not worth its cost. The
+    signature, and so `doc()` and the tool contract, keep only the real names.
+
+    Args:
+        spellings: Each alias, mapped to the parameter that it stands for.
+
+    Returns:
+        A decorator for a tool function or method.
+
+    Raises:
+        TypeError: At the call, an alias and its parameter name one value twice.
+            An unknown keyword fails as Python reports it.
+    """
+
+    def wrap(fn: Callable[P, R]) -> Callable[P, R]:
+        @functools.wraps(fn)
+        def call(*args: P.args, **kwargs: P.kwargs) -> R:
+            for spelled in [name for name in kwargs if name in spellings]:
+                canonical = spellings[spelled]
+                if canonical in kwargs:
+                    raise TypeError(
+                        f"{fn.__qualname__}() got {canonical} twice, as '{spelled}'"
+                        f" and as '{canonical}'; pass one."
+                    )
+                kwargs[canonical] = kwargs.pop(spelled)
+            return fn(*args, **kwargs)
+
+        return call
+
+    return wrap
 
 
 def source_files(paths, suffixes, *, limit=5000):
