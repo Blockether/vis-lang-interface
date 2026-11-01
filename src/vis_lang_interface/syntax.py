@@ -164,7 +164,7 @@ class SyntaxGuard:
     def ctx(self, env=None):
         """Session context naming the files under the workspace that do not parse."""
         try:
-            root = Path(self._workspace_root())
+            root = self._context_root(env)
             with self._lock:
                 self._settle()
                 if self._background:
@@ -185,6 +185,19 @@ class SyntaxGuard:
         if repairs:
             context[f"{self.language}_syntax_repairs"] = repairs
         return context
+
+    def _context_root(self, env):
+        """The workspace root of a `ctx` call.
+
+        Vis puts the value of `vis.workspace_root()` in `env` as `session_root`, so
+        the default guard reads it there and saves one host call. Without that key,
+        or with its own `workspace_root`, the guard still asks that function.
+        """
+        env = env if isinstance(env, Mapping) else {}
+        given = env.get("session_root")
+        if given and self._workspace_root is vis.workspace_root:
+            return Path(given)
+        return Path(self._workspace_root())
 
     def _refusal(self, preview):
         """Return a repair or refusal for an invalid preview, otherwise None."""
