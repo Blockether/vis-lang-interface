@@ -1,6 +1,6 @@
 [project]
 name = "vis-lang-interface"
-version = "3.1.1"
+version = "3.2.0"
 description = "The shared contract for Vis language extensions."
 keywords = ["language-tools", "sdk"]
 requires-python = ">=3.12"
