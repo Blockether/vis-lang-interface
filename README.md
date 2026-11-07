@@ -72,13 +72,16 @@ PROMPT = prompt.routing(
     "py",
     ("format_code", "lint_code", "run_tests", "repl_start", "repl_eval", "repl_stop"),
     notes=("`py.repl_eval` needs the REPL `py.repl_start` already started.",),
+    tools=PythonTools,
 )
 
 vis.register_extension(vis.Extension(..., alias="py", prompt=PROMPT))
 ```
 
-Keep `notes` to routing and policy — when a verb is the right approach and what it refuses. Each
-method's own docstring already carries its arguments and its result.
+With `tools`, each verb gets one line with its real signature, such as
+`py.repl_eval(code, *, cwd='', timeout_ms=30000) -> ReplResult`, so the model calls it without a
+probe first. Keep `notes` to routing and policy — when a verb is the right approach and what it
+refuses. Do not repeat a signature in a note.
 
 ## Keep source files parseable
 
