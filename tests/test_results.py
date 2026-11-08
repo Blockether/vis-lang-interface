@@ -9,6 +9,7 @@ from vis_lang_interface import (
     CoverageResult,
     Diagnostic,
     FileCoverage,
+    FormatResult,
     LintResult,
     SyntaxResult,
     TestFailure,
@@ -150,3 +151,31 @@ def test_a_test_run_carries_its_coverage_only_when_asked():
         coverage=measured,
     )
     assert plain.coverage is None and covered.coverage is measured and covered.is_passed
+
+
+def test_printed_format_result_gives_a_long_source_only_as_its_size():
+    source = "x = 1\n" * 400
+    result = FormatResult("python", (), (), source=source)
+    assert "x = 1" not in repr(result)
+    assert f"source=<{len(source)} chars; read .source>" in repr(result)
+    assert result.source == source
+    assert "source='y = 2\\n'" in repr(FormatResult("python", (), (), source="y = 2\n"))
+
+
+def test_printed_passed_run_gives_its_output_only_as_its_size():
+    output = "tests/test_a.py ....\n" * 200
+    result = TestResult.of(
+        "python", total=4, passed=4, failed=0, skipped=0, duration_ms=9, output=output
+    )
+    assert "test_a.py" not in repr(result)
+    assert f"output=<{len(output)} chars; read .output>" in repr(result)
+    assert result.output == output
+
+
+def test_printed_failed_run_without_a_parsed_failure_shows_the_output_tail():
+    output = "collecting ...\n" * 300 + "ImportError: no module named app"
+    result = TestResult.of(
+        "python", total=0, passed=0, failed=1, skipped=0, duration_ms=9, output=output
+    )
+    assert "ImportError: no module named app" in repr(result)
+    assert len(repr(result)) < len(output)

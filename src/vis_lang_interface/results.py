@@ -13,6 +13,28 @@ from typing import Annotated
 
 LEVELS = ("error", "warning", "info")
 
+SHOWN_TEXT = 200
+"""Characters of a text field that a printed result shows before it gives only the size."""
+
+SHOWN_TAIL = 1500
+"""Characters of runner output that a printed failed run shows when no failure was parsed."""
+
+
+def _sized(name, text, limit=SHOWN_TEXT):
+    """The repr of a text field, or its size when the text is longer than `limit`."""
+    if len(text) <= limit:
+        return repr(text)
+    return f"<{len(text)} chars; read .{name}>"
+
+
+def _repr(result, **shown):
+    """The dataclass repr of `result`, with the `shown` fields given as ready text."""
+    fields = ", ".join(
+        f"{name}={shown[name] if name in shown else repr(getattr(result, name))}"
+        for name in result.__dataclass_fields__
+    )
+    return f"{type(result).__name__}({fields})"
+
 
 @dataclass(frozen=True)
 class Diagnostic:
@@ -45,6 +67,10 @@ class FormatResult:
     lines_removed: Annotated[
         int, "Lines formatting removed; a changed line counts as removed and added."
     ] = 0
+
+    def __repr__(self):
+        """A printed result gives a long formatted text only as its size."""
+        return _repr(self, source=_sized("source", self.source))
 
 
 @dataclass(frozen=True)
@@ -194,6 +220,22 @@ class TestResult:
     coverage: Annotated[
         CoverageResult | None, "Coverage of the run; None unless it was asked for."
     ] = None
+
+    def __repr__(self):
+        """A printed result gives the runner output only as its size.
+
+        A run that failed, or ran nothing, without a parsed failure shows the
+        tail of the output, because the output is then the only cause.
+        """
+        if self.failures or (self.is_passed and self.total):
+            return _repr(self, output=_sized("output", self.output))
+        tail = self.output[-SHOWN_TAIL:]
+        shown = (
+            repr(tail)
+            if tail == self.output
+            else f"<{len(self.output)} chars; tail: {tail!r}>"
+        )
+        return _repr(self, output=shown)
 
     @classmethod
     def of(
