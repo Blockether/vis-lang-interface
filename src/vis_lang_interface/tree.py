@@ -69,20 +69,33 @@ class Tree:
                 self.seen[path] = now
 
     def _read(self, directory, covers):
-        """Take in the new entries of one directory; a new directory is walked."""
+        """Take in the new entries of one directory; a new directory is walked.
+
+        Git ignore rules apply as in `listing`: an ignored entry is not taken
+        in, and an ignored directory is not walked.
+        """
         try:
             with os.scandir(directory) as entries:
                 listed = list(entries)
         except OSError:
             return
+        new = []
         for entry in listed:
             if entry.is_dir(follow_symlinks=False):
                 if entry.path not in self.directories and _walkable(entry.name):
-                    for path in walked(entry.path, self):
-                        if covers(path):
-                            self.seen.setdefault(path, None)
+                    new.append(os.path.join(entry.path, ""))
             elif covers(entry.name) and entry.path not in self.seen:
-                self.seen[entry.path] = None
+                new.append(entry.path)
+        walked_files = []
+        for path in _unignored(self.root, new):
+            if path.endswith(os.sep):
+                folder = walked(path[:-1], self)
+                walked_files.extend(found for found in folder if covers(found))
+            else:
+                self.seen[path] = None
+        # A walked directory can hold its own .gitignore.
+        for path in _unignored(self.root, walked_files):
+            self.seen.setdefault(path, None)
 
     def _note(self, directory):
         if directory not in self.directories:
@@ -123,6 +136,31 @@ def listing(root):
     except (process.ToolMissing, process.ToolTimeout, OSError):
         pass
     return walked(root)
+
+
+def _unignored(root, paths):
+    """`paths` without the ones that git ignores, in their order.
+
+    A directory path ends with a separator, so a rule such as ``out/`` matches
+    it. Where git cannot answer, as in `listing`, every path stays.
+    """
+    if not paths:
+        return paths
+    inside = os.path.join(root, "")
+    try:
+        done = process.run(
+            ["git", "check-ignore", "-z", "--stdin"],
+            cwd=root,
+            timeout_s=60,
+            stdin="\0".join(path[len(inside) :] for path in paths),
+            env={"GIT_CONFIG_GLOBAL": os.devnull},
+        )
+    except (process.ToolMissing, process.ToolTimeout, OSError):
+        return paths
+    if not done.is_ok:
+        return paths
+    ignored = {inside + name for name in done.out.split("\0") if name}
+    return [path for path in paths if path not in ignored]
 
 
 def _shared_listing(root):
