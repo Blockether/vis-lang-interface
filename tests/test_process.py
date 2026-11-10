@@ -52,6 +52,35 @@ def test_run_applies_one_calls_environment():
     assert done.out.strip() == "set-for-this-run"
 
 
+def test_run_gives_a_child_the_variables_of_an_op_hook(monkeypatch):
+    added = {"VIS_LANG_HOOK": "from-hook"}
+    monkeypatch.setattr(vis, "call_env", lambda: added, raising=False)
+    done = process.run(
+        [sys.executable, "-c", "import os; print(os.environ.get('VIS_LANG_HOOK'))"]
+    )
+    assert done.out.strip() == "from-hook"
+
+
+def test_the_callers_own_variables_win_over_an_op_hook(monkeypatch):
+    monkeypatch.setattr(
+        vis, "call_env", lambda: {"VIS_LANG_PROBE": "hook"}, raising=False
+    )
+    done = process.run(
+        [sys.executable, "-c", "import os; print(os.environ['VIS_LANG_PROBE'])"],
+        env={"VIS_LANG_PROBE": "tool"},
+    )
+    assert done.out.strip() == "tool"
+
+
+def test_an_env_fingerprint_names_each_variable_without_its_value():
+    printed = process.env_fingerprint({"TOKEN": "secret-value", "GONE": None})
+    assert sorted(printed) == ["GONE", "TOKEN"]
+    assert printed["GONE"] == "unset"
+    assert "secret-value" not in repr(printed)
+    assert printed == process.env_fingerprint({"GONE": None, "TOKEN": "secret-value"})
+    assert printed != process.env_fingerprint({"TOKEN": "other", "GONE": None})
+
+
 def test_missing_program_names_itself():
     with pytest.raises(ToolMissing, match="vis-no-such-tool"):
         process.run(["vis-no-such-tool"])

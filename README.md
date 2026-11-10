@@ -14,7 +14,7 @@ Add the package as a dependency of your extension and return its result types:
 ```toml
 dependencies = [
   "vis-agent>=0.5.2",
-  "vis-lang-interface @ git+https://github.com/Blockether/vis-lang-interface@v3.3.3",
+  "vis-lang-interface @ git+https://github.com/Blockether/vis-lang-interface@v3.4.0",
 ]
 ```
 
@@ -30,7 +30,7 @@ def lint(paths):
 | --- | --- |
 | `vis_lang_interface.results` | `Diagnostic`, `FormatResult`, `LintResult`, `SyntaxResult`, `TestResult`, `TestFailure`, `CoverageResult`, `FileCoverage`, `CoverageGap`, `BuildResult`, `BuildArtifact`, `ReplResult`, `ReplSession` |
 | `vis_lang_interface.changes` | `line_changes` — the lines an edit added and removed, as `git diff --minimal --numstat` counts them |
-| `vis_lang_interface.process` | `run`, `spawn`, `tool_path`, `ToolRun`, `ToolMissing`, `ToolTimeout` |
+| `vis_lang_interface.process` | `run`, `spawn`, `call_env`, `env_fingerprint`, `tool_path`, `ToolRun`, `ToolMissing`, `ToolTimeout` |
 | `vis_lang_interface.runtime` | `start`, `Runtime`, `Rendezvous`, `RuntimeGone` — a runtime that stays alive between calls |
 | `vis_lang_interface.project` | `project_root`, `source_files`, `string_list` — a list argument that arrived as one bare string becomes one entry, not one entry for each character |
 | `vis_lang_interface.presentation` | Activity rendering every language binding shares: a pass or fail verdict for lint, syntax and test runs, changed-line counts for formatting, and an evaluation's code, repairs, output, error and value |
@@ -158,6 +158,18 @@ live = runtime.start(["python3", driver_path], cwd=project)
 answer = live.request({"op": "eval", "code": "1 + 1"}, timeout_s=30)
 live.stop()
 ```
+
+## Variables from an op hook
+
+A `before` op hook can add variables to one tool call with `vis.with_env`. `process.call_env()`
+gives them as `{name: value}`, where None unsets a name. `process.run` gives them to its child,
+because that child ends inside the call. The tool's own `env` wins over them.
+
+A child that outlives the call, such as a REPL, gets them only when its tool passes
+`env=process.call_env()` to `runtime.start` or `spawn`. A runtime that every call shares must not
+get them, because it would keep the variables of one call for all later calls. A tool that reuses a
+live child compares `process.env_fingerprint(...)` of the two environments. The fingerprint holds
+names and digests, never a value, so a status or a refusal can show it.
 
 A sandbox restart ends the Python process that holds the rendezvous, and with it a normal runtime.
 Give `start` a `shell_id` to keep the runtime across that restart. The runtime then holds its own

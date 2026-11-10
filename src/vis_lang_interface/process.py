@@ -17,6 +17,7 @@ when it is done.
 
 from __future__ import annotations
 
+import hashlib
 import math
 import os
 import shlex
@@ -103,6 +104,47 @@ def shell_call():
     return vis.jailed_shell if is_hosted() else vis.shell
 
 
+def call_env():
+    """Variables that a `before` op hook added to this tool call with `vis.with_env`.
+
+    A name mapped to None is unset for the child. `run` gives these to its child,
+    which ends inside the call. A child that outlives the call, such as a REPL,
+    gets them only when its caller passes them to `spawn`: a shared runtime must
+    not keep one call's variables for every later call. A Vis host older than
+    `vis.call_env` cannot run such a hook, so no hook added any variables there.
+
+    Returns:
+        A new `{name: value or None}` map, empty when no hook added variables.
+    """
+    read = getattr(vis, "call_env", None)
+    added = read() if read else None
+    return {
+        str(name): None if value is None else str(value)
+        for name, value in (added or {}).items()
+    }
+
+
+def env_fingerprint(values):
+    """`{name: digest}` for one environment delta: its shape without its values.
+
+    A status, a log and a refusal can show it, because no value appears in it. A
+    name set to None fingerprints as `unset`. The digest is the first 12 hex
+    characters of SHA-256, as the Clojure library makes it.
+
+    Args:
+        values: A `{name: value or None}` map, such as `call_env()`.
+
+    Returns:
+        The fingerprint, sorted by name.
+    """
+    return {
+        str(name): "unset"
+        if value is None
+        else hashlib.sha256(str(value).encode("utf-8")).hexdigest()[:12]
+        for name, value in sorted((values or {}).items())
+    }
+
+
 def spawn(command, *, cwd=None, env=None, timeout_s=None, read_write=(), shell_id=None):
     """Start one shell command as a confined child and answer its live handle.
 
@@ -157,7 +199,8 @@ def run(command, *, cwd=None, timeout_s=300, stdin=None, env=None, read_write=()
         cwd: Directory to run in, or the current directory when omitted.
         timeout_s: Seconds to wait before giving up.
         stdin: Text to write to the process, or None.
-        env: Variables for this run, over the ones it inherits. A name mapped to
+        env: Variables for this run, over the ones it inherits and over the
+            ones an op hook added to this call (`call_env`). A name mapped to
             None is unset.
         read_write: Paths outside the session's own roots this run may read and
             write, such as the dependency cache its toolchain fills. The private
@@ -188,7 +231,7 @@ def run(command, *, cwd=None, timeout_s=300, stdin=None, env=None, read_write=()
         handle = spawn(
             line,
             cwd=cwd,
-            env=env,
+            env={**call_env(), **dict(env or {})},
             timeout_s=timeout_s,
             read_write=[work, *read_write],
         )
