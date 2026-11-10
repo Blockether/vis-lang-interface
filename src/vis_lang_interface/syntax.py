@@ -414,12 +414,13 @@ class SyntaxGuard:
         """Check what the block changed in a background thread; `_settle` stores it."""
         report = self._report(root)
         tree = self._tree(root)
+        tree.read_moved(self.covers)
         job = {"root": root, "result": None, "logs": []}
 
         def check():
             self._local.logs = job["logs"]
             try:
-                changed = tree.changes(self.covers)
+                changed = tree.changes(self.covers, read=False)
                 job["result"] = self._rechecked(root, report, changed, True)
             except Exception as error:
                 job["logs"].append(("after python_execution", error))

@@ -44,8 +44,26 @@ class Tree:
             if covers(path):
                 self.seen[path] = stamp_of(path) if known is None else known.get(path)
 
-    def changes(self, covers):
-        """`{path: stamp}` for every file the parser reads that changed since seen."""
+    def changes(self, covers, read=True):
+        """`{path: stamp}` for every file the parser reads that changed since seen.
+
+        With `read` False, it only stats: `read_moved` must run first.
+        """
+        if read:
+            self.read_moved(covers)
+        changed = {}
+        for path, stamp in self.seen.items():
+            now = stamp_of(path)
+            if now != stamp or stamp is None:
+                changed[path] = now
+        return changed
+
+    def read_moved(self, covers):
+        """Take in the new entries of each directory whose mtime moved.
+
+        Git decides what is ignored, so inside Vis call it on the hook thread:
+        the host runs no process for another thread.
+        """
         for directory, stamp in list(self.directories.items()):
             now = _mtime(directory)
             if now is None:
@@ -53,12 +71,6 @@ class Tree:
             elif now != stamp:
                 self.directories[directory] = now
                 self._read(directory, covers)
-        changed = {}
-        for path, stamp in self.seen.items():
-            now = stamp_of(path)
-            if now != stamp or stamp is None:
-                changed[path] = now
-        return changed
 
     def settle(self, changed):
         """Take `{path: stamp}` from `changes` as seen; a None stamp forgets a gone file."""

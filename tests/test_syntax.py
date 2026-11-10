@@ -401,6 +401,14 @@ def test_background_threads_never_call_the_host(
     monkeypatch.setattr(
         vis, "log", lambda level, text: logged.append(threading.get_ident())
     )
+    # A process runs through the host door, which refuses other threads.
+    run, ran = process.run, set()
+
+    def recorded(*args, **kwargs):
+        ran.add(threading.get_ident())
+        return run(*args, **kwargs)
+
+    monkeypatch.setattr(process, "run", recorded)
     background.ctx()
     background.before_block(block())
     written(tmp_path, "a.lisp", "(")
@@ -409,3 +417,4 @@ def test_background_threads_never_call_the_host(
     background.ctx()
     assert logged == [threading.get_ident()]
     assert background._state.threads == {threading.get_ident()}
+    assert ran == {threading.get_ident()}
