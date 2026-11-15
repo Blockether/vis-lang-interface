@@ -30,7 +30,7 @@ def lint(paths):
 | --- | --- |
 | `vis_lang_interface.results` | `Diagnostic`, `FormatResult`, `LintResult`, `SyntaxResult`, `TestResult`, `TestFailure`, `CoverageResult`, `FileCoverage`, `CoverageGap`, `BuildResult`, `BuildArtifact`, `ReplResult`, `ReplSession` |
 | `vis_lang_interface.changes` | `line_changes` — the lines an edit added and removed, as `git diff --minimal --numstat` counts them |
-| `vis_lang_interface.process` | `run`, `spawn`, `call_env`, `env_fingerprint`, `tool_path`, `ToolRun`, `ToolMissing`, `ToolTimeout` |
+| `vis_lang_interface.process` | `run`, `spawn`, `call_env`, `env_fingerprint`, `tool_path`, `vis_python`, `VisPython`, `ToolRun`, `ToolMissing`, `ToolTimeout` |
 | `vis_lang_interface.runtime` | `start`, `Runtime`, `Rendezvous`, `RuntimeGone` — a runtime that stays alive between calls |
 | `vis_lang_interface.project` | `project_root`, `source_files`, `string_list` — a list argument that arrived as one bare string becomes one entry, not one entry for each character |
 | `vis_lang_interface.presentation` | Activity rendering every language binding shares: a pass or fail verdict for lint, syntax and test runs, changed-line counts for formatting, and an evaluation's code, repairs, output, error and value |
@@ -181,6 +181,24 @@ live = runtime.start(["python3", driver_path], cwd=project, shell_id="my-runtime
 live.detach()
 live = runtime.start(["python3", driver_path], cwd=project, shell_id="my-runtime")
 ```
+
+## Start the Python of Vis
+
+Vis can be a command on `PATH`, a native binary in a container or a JVM from a source checkout. A
+language tool that starts Vis Python or its uv asks `process.vis_python()` for the command. It does
+not search `PATH` for `vis-agent`, and it does not compute the Vis home.
+
+```python
+found = process.vis_python()
+if found.is_available:
+    process.run(found.uv("sync", "--frozen"), cwd=project)
+    command = found.python("-m", "pytest", shared=True)
+packages = found.shared_packages
+```
+
+`python()` and `uv()` raise `ToolMissing` when the process has no Vis. On a Vis host without
+`vis.python_runtime`, the launcher is `vis-agent` on `PATH`, and the shared packages follow
+`VIS_PYTHON_PACKAGES`, then `VIS_HOME`, then `~/.vis`.
 
 ## The extensions that use it
 

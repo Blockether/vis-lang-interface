@@ -91,6 +91,49 @@ def test_tool_path_includes_the_install_hint():
         process.tool_path("vis-no-such-tool", "install it with brew")
 
 
+def test_vis_python_runs_the_vis_that_the_host_names(tmp_path, monkeypatch):
+    # Regression, vis#479: a Vis that is not on PATH, such as a native binary in a
+    # container, was not found.
+    from types import SimpleNamespace
+
+    named = SimpleNamespace(
+        launcher=("/var/task/vis", "-Duser.home=/tmp"),
+        shared_packages=tmp_path / "packages",
+    )
+    monkeypatch.setattr(vis, "python_runtime", lambda: named, raising=False)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    found = process.vis_python()
+    assert found.shared_packages == tmp_path / "packages"
+    assert found.uv("sync", shared=True) == [
+        "/var/task/vis",
+        "-Duser.home=/tmp",
+        "python",
+        "--shared",
+        "uv",
+        "sync",
+    ]
+
+
+def test_vis_python_finds_vis_on_path_with_an_older_host(tmp_path, monkeypatch):
+    # vis#479: a Vis host older than `vis.python_runtime` keeps the PATH rule.
+    agent = tmp_path / "bin" / "vis-agent"
+    agent.parent.mkdir()
+    agent.write_text("#!/bin/sh\n")
+    agent.chmod(0o755)
+    monkeypatch.delattr(vis, "python_runtime", raising=False)
+    monkeypatch.setenv("PATH", str(agent.parent))
+    monkeypatch.delenv("VIS_PYTHON_PACKAGES", raising=False)
+    monkeypatch.setenv("VIS_HOME", str(tmp_path / "home"))
+    found = process.vis_python()
+    assert found.python("-m", "pytest") == [str(agent), "python", "-m", "pytest"]
+    assert found.shared_packages == tmp_path / "home" / "python" / "packages"
+    monkeypatch.setenv("PATH", str(tmp_path))
+    absent = process.vis_python()
+    assert absent.is_available is False
+    with pytest.raises(ToolMissing, match="vis-agent is not on PATH"):
+        absent.uv("sync")
+
+
 def test_timeout_names_the_program():
     with pytest.raises(ToolTimeout, match="did not finish"):
         process.run([sys.executable, "-c", "import time; time.sleep(30)"], timeout_s=1)

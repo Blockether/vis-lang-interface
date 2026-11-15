@@ -27,11 +27,13 @@ from vis_lang_interface.process import (
     ToolMissing,
     ToolRun,
     ToolTimeout,
+    VisPython,
     call_env,
     env_fingerprint,
     run,
     spawn,
     tool_path,
+    vis_python,
 )
 from vis_lang_interface.project import (
     PATH_ALIASES,
@@ -78,6 +80,7 @@ __all__ = [
     "ToolMissing",
     "ToolRun",
     "ToolTimeout",
+    "VisPython",
     "aliased",
     "call_env",
     "env_fingerprint",
@@ -88,4 +91,5 @@ __all__ = [
     "spawn",
     "string_list",
     "tool_path",
+    "vis_python",
 ]

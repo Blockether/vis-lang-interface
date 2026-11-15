@@ -58,6 +58,83 @@ class ToolRun:
         return self.exit_code == 0
 
 
+@dataclass(frozen=True)
+class VisPython:
+    """The Python of the Vis that hosts this process, and how to run it.
+
+    Vis can be a command on PATH, a native binary in a container or a JVM from a
+    source checkout. So a language extension asks `vis_python()` and never
+    searches PATH for `vis-agent` or computes the Vis home.
+    """
+
+    launcher: Annotated[
+        tuple[str, ...],
+        "Command that runs this Vis from any directory. Empty without a Vis.",
+    ]
+    shared_packages: Annotated[Path, "Directory of the Vis shared packages."]
+
+    @property
+    def is_available(self):
+        """Whether a Vis is there to run Python and uv."""
+        return bool(self.launcher)
+
+    def python(self, *args, shared=False):
+        """The command that runs Vis Python with `args`, like `vis-agent python`.
+
+        Args:
+            *args: Arguments for Python.
+            shared: Use the Vis shared packages and not the project's `.venv`,
+                like `vis-agent python --shared`.
+
+        Returns:
+            The command as a list.
+
+        Raises:
+            ToolMissing: This process has no Vis.
+        """
+        if not self.launcher:
+            raise ToolMissing("vis-agent is not on PATH. Install vis-agent.")
+        mode = ("--shared",) if shared else ()
+        return [*self.launcher, "python", *mode, *args]
+
+    def uv(self, *args, shared=False):
+        """The command that runs the uv of Vis with `args`, like `vis-agent python uv`.
+
+        Args:
+            *args: Arguments for uv.
+            shared: Install to the Vis shared packages.
+
+        Returns:
+            The command as a list.
+
+        Raises:
+            ToolMissing: This process has no Vis.
+        """
+        return self.python("uv", *args, shared=shared)
+
+
+def vis_python():
+    """The Python of the Vis that hosts this process: `vis.python_runtime()`.
+
+    A Vis host older than `vis.python_runtime` names no location. There, the
+    launcher is `vis-agent` on PATH, and the shared packages follow
+    `VIS_PYTHON_PACKAGES`, then `VIS_HOME`, then `~/.vis`.
+
+    Returns:
+        The launcher and the shared packages. The launcher is empty without a Vis.
+    """
+    read = getattr(vis, "python_runtime", None)
+    if read:
+        found = read()
+        return VisPython(tuple(found.launcher), Path(found.shared_packages))
+    agent = shutil.which("vis-agent")
+    packages = os.environ.get("VIS_PYTHON_PACKAGES", "").strip()
+    if not packages:
+        home = os.environ.get("VIS_HOME", "").strip() or os.path.join("~", ".vis")
+        packages = os.path.join(home, "python", "packages")
+    return VisPython((agent,) if agent else (), Path(packages).expanduser())
+
+
 def tool_path(program, hint=""):
     """Absolute path of `program` on PATH.
 
