@@ -46,6 +46,18 @@ takes about a millisecond. A changed region of tens of thousands of lines that e
 settle in about half a second is matched through the lines that repeat least; its counts can then
 exceed the fewest, never fall below them.
 
+## Say which command ran
+
+When an extension chooses among several tools, `FormatResult` and `LintResult` carry the argv that
+ran in `command` and who chose it in `chosen_by`: `project`, `global`, or `preset:<name>` when the
+extension picked the tool from the project's files. A printed result shows both only for a
+`preset:` choice, because only a guess explains a result that differs from CI. The Activity card
+shows the command every time:
+
+```python
+LintResult.of("javascript", rows, files=3, command=argv, chosen_by="preset:oxlint")
+```
+
 ## Tell the model your verbs exist
 
 Vis prints one section per active extension into the system prompt. An extension that contributes

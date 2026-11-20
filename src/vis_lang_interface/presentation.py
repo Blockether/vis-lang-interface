@@ -11,6 +11,7 @@ a summary repeats it. Build a render callback with `renderer` and give it to
 from __future__ import annotations
 
 import posixpath
+import shlex
 import textwrap
 from dataclasses import fields
 
@@ -136,30 +137,44 @@ def _line_changes(result):
     return f"+{result.lines_added} −{result.lines_removed} lines"
 
 
+def _command(result):
+    """The command a format or lint ran and who chose it, or nothing when unreported."""
+    if not result.command:
+        return ()
+    chosen = (
+        (vis.ActivityText(f"Chosen by {result.chosen_by}"),) if result.chosen_by else ()
+    )
+    return (*_block("Command", shlex.join(result.command), "shell"), *chosen)
+
+
 def format_presentation(label, result):
     """Presentation for a `FormatResult`: how much formatting changed, in its summary.
 
     A reader wants to know whether formatting touched anything and how much, so
     the summary counts files and changed lines. The formatted text and the file
-    list stay in the result that a model reads. The activity repeats neither.
+    list stay in the result that a model reads. The activity repeats neither. It
+    shows the command that ran, when the extension reports one.
     """
+    return vis.ActivityPresentation(label, _format_summary(result), _command(result))
+
+
+def _format_summary(result):
+    """What formatting changed, on one line."""
     lines = _line_changes(result)
     counted = f" ({lines})" if lines else ""
     changed = len(result.changed)
     files = changed + len(result.unchanged)
     if not files:
         if lines:
-            return vis.ActivityPresentation(label, f"reformatted{counted}")
-        said = "already formatted" if result.source else "nothing to format"
-        return vis.ActivityPresentation(label, said)
+            return f"reformatted{counted}"
+        return "already formatted" if result.source else "nothing to format"
     if not changed:
-        return vis.ActivityPresentation(label, f"{_files(files)} already formatted")
+        return f"{_files(files)} already formatted"
     where = f"{changed} of {_files(files)}" if files > changed else _files(changed)
     if result.is_written:
-        verb = "reformatted"
-    else:
-        verb = "needs formatting" if changed == 1 else "need formatting"
-    return vis.ActivityPresentation(label, f"{where} {verb}{counted}")
+        return f"{where} reformatted{counted}"
+    verb = "needs formatting" if changed == 1 else "need formatting"
+    return f"{where} {verb}{counted}"
 
 
 def _findings(rows, directory=""):
@@ -201,11 +216,18 @@ def lint_presentation(label, result):
 
     Each directory is a section whose summary carries its own counts, so a reader
     sees where the findings are before opening any of them. Findings in a single
-    directory need no grouping and form one table.
+    directory need no grouping and form one table. The command that ran follows
+    the findings, when the extension reports one.
     """
+    command = _command(result)
     if result.is_clean:
         checked = f" in {_files(result.files)}" if result.files else ""
-        return _checks(label, f"no findings{checked}", (), is_passed=True)
+        return _checks(label, f"no findings{checked}", command, is_passed=True)
+    return _found(label, result, command)
+
+
+def _found(label, result, after=()):
+    """The findings of a lint or syntax result that is not clean, then `after`."""
     rows = result.diagnostics
     flagged = len({row.path for row in rows})
     where = (
@@ -218,7 +240,7 @@ def lint_presentation(label, result):
     for row in rows:
         groups.setdefault(posixpath.dirname(row.path) or ".", []).append(row)
     if len(groups) == 1:
-        return _checks(label, summary, _findings(rows), is_passed=False)
+        return _checks(label, summary, (*_findings(rows), *after), is_passed=False)
     directories = sorted(groups)
     sections = tuple(
         _directory_section(directory, groups[directory])
@@ -228,7 +250,7 @@ def lint_presentation(label, result):
     if len(directories) > MAX_SECTIONS:
         note = f"Showing the first {MAX_SECTIONS} of {len(directories)} directories."
         content = (vis.ActivityText(note),)
-    return _checks(label, summary, content, sections, is_passed=False)
+    return _checks(label, summary, (*content, *after), sections, is_passed=False)
 
 
 def syntax_presentation(label, result):
@@ -240,7 +262,7 @@ def syntax_presentation(label, result):
     if result.is_clean:
         checked = f" in {_files(result.files)}" if result.files else ""
         return _checks(label, f"no syntax errors{checked}", (), is_passed=True)
-    return lint_presentation(label, result)
+    return _found(label, result)
 
 
 def _test_counts(result):

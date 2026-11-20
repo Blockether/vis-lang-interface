@@ -162,6 +162,23 @@ def test_printed_format_result_gives_a_long_source_only_as_its_size():
     assert "source='y = 2\\n'" in repr(FormatResult("python", (), (), source="y = 2\n"))
 
 
+def test_printed_result_names_its_command_only_when_detection_picked_it():
+    command = ("oxlint", "-f", "json", "src/a.ts")
+    configured = LintResult.of("javascript", [], command=command, chosen_by="project")
+    guessed = LintResult.of(
+        "javascript", [], command=command, chosen_by="preset:oxlint"
+    )
+    assert configured.command == command
+    assert "command" not in repr(configured) and "chosen_by" not in repr(configured)
+    assert "chosen_by='preset:oxlint'" in repr(guessed)
+    assert repr(command) in repr(guessed)
+    formatted = FormatResult(
+        "javascript", (), (), command=("prettier",), chosen_by="preset:prettier"
+    )
+    assert "command=('prettier',)" in repr(formatted)
+    assert "command" not in repr(FormatResult("javascript", (), ()))
+
+
 def test_printed_passed_run_gives_its_output_only_as_its_size():
     output = "tests/test_a.py ....\n" * 200
     result = TestResult.of(

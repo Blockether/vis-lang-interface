@@ -19,6 +19,9 @@ SHOWN_TEXT = 200
 SHOWN_TAIL = 1500
 """Characters of runner output that a printed failed run shows when no failure was parsed."""
 
+PRESET = "preset:"
+"""The `chosen_by` prefix of a command that detection picked, not the person's configuration."""
+
 
 def _sized(name, text, limit=SHOWN_TEXT):
     """The repr of a text field, or its size when the text is longer than `limit`."""
@@ -27,13 +30,21 @@ def _sized(name, text, limit=SHOWN_TEXT):
     return f"<{len(text)} chars; read .{name}>"
 
 
-def _repr(result, **shown):
-    """The dataclass repr of `result`, with the `shown` fields given as ready text."""
+def _repr(result, hidden=(), **shown):
+    """The dataclass repr of `result`, without the `hidden` fields and with the
+    `shown` fields given as ready text."""
     fields = ", ".join(
         f"{name}={shown[name] if name in shown else repr(getattr(result, name))}"
         for name in result.__dataclass_fields__
+        if name not in hidden
     )
     return f"{type(result).__name__}({fields})"
+
+
+def _unguessed(result):
+    """The command fields a printed result leaves out: both, unless detection
+    picked the command, because only a guess explains a surprising result."""
+    return () if result.chosen_by.startswith(PRESET) else ("command", "chosen_by")
 
 
 @dataclass(frozen=True)
@@ -67,10 +78,18 @@ class FormatResult:
     lines_removed: Annotated[
         int, "Lines formatting removed; a changed line counts as removed and added."
     ] = 0
+    command: Annotated[
+        tuple[str, ...], "Command that ran, as argv; empty when the tool does not say."
+    ] = ()
+    chosen_by: Annotated[
+        str,
+        "Who chose the command: project, global, or preset:<name> when detection picked it.",
+    ] = ""
 
     def __repr__(self):
-        """A printed result gives a long formatted text only as its size."""
-        return _repr(self, source=_sized("source", self.source))
+        """A printed result gives a long formatted text only as its size, and the
+        command only when detection picked it."""
+        return _repr(self, _unguessed(self), source=_sized("source", self.source))
 
 
 @dataclass(frozen=True)
@@ -83,14 +102,34 @@ class LintResult:
     warnings: Annotated[int, "Findings at warning level."]
     diagnostics: Annotated[tuple[Diagnostic, ...], "The findings, in file order."]
     is_clean: Annotated[bool, "Whether the linter reported nothing at all."]
+    command: Annotated[
+        tuple[str, ...], "Command that ran, as argv; empty when the tool does not say."
+    ] = ()
+    chosen_by: Annotated[
+        str,
+        "Who chose the command: project, global, or preset:<name> when detection picked it.",
+    ] = ""
+
+    def __repr__(self):
+        """A printed result gives the command only when detection picked it."""
+        return _repr(self, _unguessed(self))
 
     @classmethod
-    def of(cls, language, diagnostics, files=0):
+    def of(cls, language, diagnostics, files=0, *, command=(), chosen_by=""):
         """A result whose counts are derived from `diagnostics`."""
         rows = tuple(diagnostics)
         errors = sum(1 for row in rows if row.level == "error")
         warnings = sum(1 for row in rows if row.level == "warning")
-        return cls(language, int(files), errors, warnings, rows, not rows)
+        return cls(
+            language,
+            int(files),
+            errors,
+            warnings,
+            rows,
+            not rows,
+            tuple(command),
+            str(chosen_by),
+        )
 
 
 @dataclass(frozen=True)

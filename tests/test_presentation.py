@@ -185,6 +185,35 @@ def test_format_without_changes_or_files_says_so():
     ]
 
 
+def test_format_and_lint_show_the_command_and_who_chose_it():
+    command = ("biome", "lint", "--reporter=json", "src/my file.ts")
+    linted = presentation.lint_presentation(
+        "Lint JavaScript code",
+        LintResult.of(
+            "javascript",
+            [
+                Diagnostic(
+                    "src/my file.ts", 2, 1, "warning", "unused", "noUnusedVariables"
+                )
+            ],
+            files=1,
+            command=command,
+            chosen_by="preset:biome",
+        ),
+    )
+    assert _table(linted.content[0]).rows[0][0] == "src/my file.ts:2"
+    assert (
+        _code(linted.content[2]).text == "biome lint --reporter=json 'src/my file.ts'"
+    )
+    assert _text(linted.content[3]).text == "Chosen by preset:biome"
+    formatted = _format(
+        FormatResult("javascript", (), ("a.ts",), command=("dprint", "fmt"))
+    )
+    assert formatted.summary == "1 file already formatted"
+    assert _code(formatted.content[1]).text == "dprint fmt"
+    assert len(formatted.content) == 2
+
+
 def test_each_failing_test_is_its_own_section():
     result = TestResult.of(
         "python",
