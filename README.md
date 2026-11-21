@@ -10,8 +10,8 @@ Add the contract to your extension's `pyproject.toml`:
 ```toml
 [project]
 dependencies = [
-  "vis-agent>=0.5.2",
-  "vis-lang-interface @ git+https://github.com/Blockether/vis-lang-interface@v3.6.0",
+  "vis-agent>=0.5.26",
+  "vis-lang-interface @ git+https://github.com/Blockether/vis-lang-interface@v3.6.1",
 ]
 ```
 
