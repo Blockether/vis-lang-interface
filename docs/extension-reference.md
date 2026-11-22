@@ -87,7 +87,7 @@ refuses. Do not repeat a signature in a note.
 ## Keep source files parseable
 
 `SyntaxGuard` asks the language's own parser whether changed files still parse. Syntax checks run
-only through edit hooks. They are not tools available to `python_execution` or public routing verbs.
+only through edit hooks. They are not tools available to `py3` or public routing verbs.
 
 The interface has no parser. Supply the file suffixes and a private `_check_syntax` callback.
 The callback takes `{path: text}` and the workspace root. It returns a `SyntaxResult` whose

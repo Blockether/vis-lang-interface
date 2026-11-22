@@ -39,7 +39,7 @@ def test_valid_edits_never_run_repair(tmp_path):
     path = tmp_path / "a.lisp"
     path.write_text("(a)\n")
     guard = make_guard(tmp_path, unexpected)
-    block = {"op": "python_execution", "args": [{"code": "..."}], "result": {}}
+    block = {"op": "py3", "args": [{"code": "..."}], "result": {}}
     guard.before_block(block)
     path.write_text("(b)\n")
     guard.after_edit(block)
@@ -59,7 +59,7 @@ def test_invalid_candidates_are_never_written(tmp_path, candidate):
     path = tmp_path / "a.lisp"
     path.write_text("(a)\n")
     guard = make_guard(tmp_path, lambda *a, **kw: candidate)
-    block = {"op": "python_execution", "args": [{"code": "..."}], "result": {}}
+    block = {"op": "py3", "args": [{"code": "..."}], "result": {}}
     guard.before_block(block)
     path.write_text("(b\n")
     guard.after_edit(block)
@@ -76,7 +76,7 @@ def test_unavailable_parser_never_authorizes_repair(tmp_path):
     path = tmp_path / "a.lisp"
     path.write_text("(a)\n")
     guard = make_guard(tmp_path, fixed, check=unavailable)
-    block = {"op": "python_execution", "args": [{"code": "..."}], "result": {}}
+    block = {"op": "py3", "args": [{"code": "..."}], "result": {}}
     guard.before_block(block)
     path.write_text("(b\n")
     guard.after_edit(block)
@@ -88,7 +88,7 @@ def test_after_block_repairs_changed_files_and_reports_the_diff(tmp_path):
     path.write_bytes(b"(a)\r\n")
     path.chmod(0o640)
     guard = make_guard(tmp_path, fixed)
-    block = {"op": "python_execution", "args": [{"code": "..."}], "result": {}}
+    block = {"op": "py3", "args": [{"code": "..."}], "result": {}}
     guard.before_block(block)
     path.write_bytes(b"(b\r\n")
     guard.after_edit(block)
@@ -110,7 +110,7 @@ def test_after_block_does_not_overwrite_a_concurrent_write(tmp_path):
         return fixed(source)
 
     guard = make_guard(tmp_path, competing)
-    block = {"op": "python_execution", "args": [{"code": "..."}], "result": {}}
+    block = {"op": "py3", "args": [{"code": "..."}], "result": {}}
     guard.before_block(block)
     path.write_text("(b\n")
     guard.after_edit(block)

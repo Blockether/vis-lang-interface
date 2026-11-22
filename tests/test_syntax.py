@@ -52,7 +52,7 @@ def written(root, name, text):
 
 
 def block():
-    return {"op": "python_execution", "args": [{"code": "..."}], "result": {}}
+    return {"op": "py3", "args": [{"code": "..."}], "result": {}}
 
 
 def test_suffixes_match_in_any_case(guard):
@@ -212,11 +212,11 @@ def test_a_failing_workspace_lookup_never_breaks_an_operation(parser):
     assert guard.ctx() == {}
 
 
-def test_the_hooks_cover_python_execution(guard):
+def test_the_hooks_cover_py3(guard):
     hooks = [(hook.ops, hook.phase) for hook in guard.op_hooks()]
     assert hooks == [
-        (("python_execution",), "before"),
-        (("python_execution",), "after"),
+        (("py3",), "before"),
+        (("py3",), "after"),
     ]
 
 

@@ -113,8 +113,8 @@ class SyntaxGuard:
     def op_hooks(self):
         """The hooks to pass as `vis.Extension(op_hooks=...)`."""
         return (
-            vis.OpHook(["python_execution"], self.before_block),
-            vis.OpHook(["python_execution"], self.after_edit, phase="after"),
+            vis.OpHook(["py3"], self.before_block),
+            vis.OpHook(["py3"], self.after_edit, phase="after"),
         )
 
     def before_block(self, call):
@@ -124,7 +124,7 @@ class SyntaxGuard:
                 self._settle()
                 self._tree(Path(self._workspace_root()))
         except Exception as error:
-            self._log("before python_execution", error)
+            self._log("before py3", error)
         return None
 
     def after_edit(self, call):
@@ -362,7 +362,7 @@ class SyntaxGuard:
                 changed = tree.changes(self.covers, read=False)
                 job["result"] = self._rechecked(root, report, changed, True)
             except Exception as error:
-                job["logs"].append(("after python_execution", error))
+                job["logs"].append(("after py3", error))
 
         job["thread"] = threading.Thread(
             target=check, name=f"vis-{self.language}-syntax-check", daemon=True
