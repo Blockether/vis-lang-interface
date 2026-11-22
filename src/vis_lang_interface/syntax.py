@@ -1,9 +1,6 @@
 """Check changed files and apply validated structural repairs through edit hooks.
 
 The language extension supplies its parser and optional repair callback.
-Before a patch writes, a repair decision replaces the proposed source.
-The host writes that validated source once and reports the corrections.
-Without a valid repair, a patch that breaks a parseable file is refused.
 
 After a Python block, the guard checks changed files and can repair them.
 Each repair uses a separate atomic replacement and checks for concurrent changes.
@@ -63,9 +60,10 @@ class SyntaxGuard:
             it was given. Register the guard's hooks, not this callback as a tool.
         repair: Optional callback of ``source``, with keyword arguments
             ``original``, ``spans`` and ``parses_clean``. Spans use inclusive,
-            one-based line numbers in the proposed text. Return an object with
+            one-based line numbers in the changed text. Return an object with
             ``source`` and nonempty ``notes``, or None. The parser must accept
-            the complete result. A post-block repair has no original source.
+            the complete result. ``original`` is None: a Python block gives
+            no source from before its writes.
         most_files: Most changed files one operation parses again. The rest
             wait for the next operation.
         workspace_root: Function returning the session's working copy;
@@ -115,20 +113,9 @@ class SyntaxGuard:
     def op_hooks(self):
         """The hooks to pass as `vis.Extension(op_hooks=...)`."""
         return (
-            vis.OpHook(["patch"], self.before_patch),
             vis.OpHook(["python_execution"], self.before_block),
-            vis.OpHook(["patch", "python_execution"], self.after_edit, phase="after"),
+            vis.OpHook(["python_execution"], self.after_edit, phase="after"),
         )
-
-    def before_patch(self, call):
-        """Repair a proposed patch, or refuse it if it breaks a parseable file."""
-        try:
-            with self._lock:
-                self._settle()
-            return self._refusal(call.get("preview"))
-        except Exception as error:
-            self._log("before patch", error)
-            return None
 
     def before_block(self, call):
         """List the workspace's files before a Python block can change them."""
@@ -141,15 +128,12 @@ class SyntaxGuard:
         return None
 
     def after_edit(self, call):
-        """Parse again what a patch or a Python block changed, and keep the report."""
+        """Parse again what a Python block changed, and keep the report."""
         try:
             root = Path(self._workspace_root())
             with self._lock:
                 self._settle()
-                if call.get("op") == "patch":
-                    if call.get("result") is not None:
-                        self._recheck(root, self._patched(call.get("args"), root))
-                elif call.get("result") is None:
+                if call.get("result") is None:
                     pass
                 elif self._background:
                     self._start_check(root)
@@ -198,39 +182,6 @@ class SyntaxGuard:
         if given and self._workspace_root is vis.workspace_root:
             return Path(given)
         return Path(self._workspace_root())
-
-    def _refusal(self, preview):
-        """Return a repair or refusal for an invalid preview, otherwise None."""
-        if not isinstance(preview, Mapping):
-            return None
-        path, before, after = (
-            preview.get(name) for name in ("path", "before", "after")
-        )
-        if not all(isinstance(value, str) for value in (path, before, after)):
-            return None
-        if before == after or not self.covers(path):
-            return None
-        root = Path(self._workspace_root())
-        broken = self._ask({path: after}, root)
-        if not broken:
-            return None
-        candidate = self._candidate(
-            path, after, root, original=before, spans=preview.get("spans", [])
-        )
-        if candidate:
-            return candidate
-        if self._ask({path: before}, root) != ():
-            return None
-        row = broken[0]
-        reason = (
-            f"{_location(row, path)}: {row.message}. This patch would make the file "
-            "unparseable, so nothing was written."
-        )
-        hint = (
-            f"The file parses now. Change the edits so that the {self.language} "
-            "parser still reads it, then patch again."
-        )
-        return _block(reason, hint)
 
     def _candidate(self, path, source, root, *, original, spans):
         """Accept a language repair only when its final source passes the parser."""
@@ -310,18 +261,6 @@ class SyntaxGuard:
             self._quiet_until = time.monotonic() + QUIET_S
             self._log("parser", error)
             return None
-
-    def _patched(self, args, root):
-        """`{path: stamp}` for the file a patch call wrote, when the parser reads it."""
-        if not isinstance(args, (list, tuple)) or not args:
-            return {}
-        if not isinstance(args[0], str):
-            return {}
-        path = Path(args[0]).expanduser()
-        path = path if path.is_absolute() else root / path
-        if not self.covers(path):
-            return {}
-        return {str(path): _stamp(path)}
 
     def _recheck(self, root, changed, *, repair=False):
         """Parse the `{path: stamp}` files again and store what still does not parse."""
@@ -515,21 +454,3 @@ def _shown(root, path):
 def _absolute(root, shown):
     path = Path(shown)
     return path if path.is_absolute() else Path(root) / path
-
-
-def _location(row, path):
-    """`path:line:column`, leaving out what the parser did not locate."""
-    parts = [row.path or path]
-    if row.line:
-        parts.append(str(row.line))
-        if row.column:
-            parts.append(str(row.column))
-    return ":".join(parts)
-
-
-def _block(reason, hint):
-    """`vis.block` carrying a hint, on a Vis host whose `block` takes one."""
-    try:
-        return vis.block(reason, hint=hint)
-    except TypeError:
-        return vis.block(f"{reason} {hint}")

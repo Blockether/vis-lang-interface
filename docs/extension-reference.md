@@ -106,16 +106,12 @@ guard = SyntaxGuard("clojure", (".clj", ".cljs", ".cljc", ".edn"), _check_syntax
 vis.register_extension(vis.Extension(..., op_hooks=guard.op_hooks(), ctx=guard.ctx))
 ```
 
-- Before a `patch` writes, Vis gives the hook the proposed text and changed line spans.
-  If a repair callback returns valid source, the host writes that source once and reports the corrections.
-  Otherwise, a patch that breaks a parseable file is refused. A previously broken file can still be repaired in steps.
-- After a patch, the guard checks the changed file again.
-  After a Python block, it can repair changed files before checking them again.
+- After a Python block, the guard can repair changed files before checking them again.
   This includes writes from `Path.write_text()`, `open(..., "w")` and programs started by the block.
 - Unresolved errors appear in `session["clojure_syntax_errors"]`.
   Completed repairs appear in `session["clojure_syntax_repairs"]`, with notes and diffs.
   Other language names replace the `clojure` prefix.
-- A patch is atomic for one file. A Python block is not transactional.
+- A Python block is not transactional.
   Post-block repairs happen after the original writes and cannot undo the block's other effects.
   Each repair checks that the file still matches before replacing it. Symbolic links are not replaced.
 - The guard watches tracked and untracked workspace files, but skips ignored files.

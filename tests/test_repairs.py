@@ -26,45 +26,24 @@ def make_guard(root, repair, check=parser):
     )
 
 
-def call(before, after):
-    return {
-        "op": "patch",
-        "args": ["a.lisp", []],
-        "preview": {
-            "path": "a.lisp",
-            "before": before,
-            "after": after,
-            "spans": [[1, 1]],
-        },
-    }
-
-
 def fixed(source, **kwargs):
     return SimpleNamespace(
         source=source.replace("(b", "(b)"), notes=("Closed the form.",)
     )
 
 
-def test_patch_returns_a_repair_without_writing(tmp_path):
+def test_valid_edits_never_run_repair(tmp_path):
+    def unexpected(*args, **kwargs):
+        pytest.fail("Repair must not change valid source")
+
     path = tmp_path / "a.lisp"
     path.write_text("(a)\n")
-    seen = []
-
-    def repair(source, **kwargs):
-        seen.append((source, kwargs))
-        return fixed(source)
-
-    guard = make_guard(tmp_path, repair)
-    result = guard.before_patch(call("(a)\n", "(b\n"))
-    assert result == {
-        "marker": "repair",
-        "source": "(b)\n",
-        "notes": ["Closed the form."],
-    }
-    assert path.read_text() == "(a)\n"
-    assert seen[0][1]["original"] == "(a)\n"
-    assert seen[0][1]["spans"] == [[1, 1]]
-    assert seen[0][1]["parses_clean"]("(b)")
+    guard = make_guard(tmp_path, unexpected)
+    block = {"op": "python_execution", "args": [{"code": "..."}], "result": {}}
+    guard.before_block(block)
+    path.write_text("(b)\n")
+    guard.after_edit(block)
+    assert path.read_text() == "(b)\n"
 
 
 @pytest.mark.parametrize(
@@ -76,26 +55,32 @@ def test_patch_returns_a_repair_without_writing(tmp_path):
         SimpleNamespace(source="(b)", notes="Invalid"),
     ],
 )
-def test_invalid_candidates_still_refuse_the_patch(tmp_path, candidate):
+def test_invalid_candidates_are_never_written(tmp_path, candidate):
+    path = tmp_path / "a.lisp"
+    path.write_text("(a)\n")
     guard = make_guard(tmp_path, lambda *a, **kw: candidate)
-    verdict = guard.before_patch(call("(a)", "(b"))
-    assert verdict is not None
-    assert verdict["marker"] == "block"
-
-
-def test_valid_edits_never_run_repair(tmp_path):
-    def unexpected(*args, **kwargs):
-        pytest.fail("Repair must not change valid source")
-
-    assert make_guard(tmp_path, unexpected).before_patch(call("(a)", "(b)")) is None
+    block = {"op": "python_execution", "args": [{"code": "..."}], "result": {}}
+    guard.before_block(block)
+    path.write_text("(b\n")
+    guard.after_edit(block)
+    assert path.read_text() == "(b\n"
+    context = guard.ctx()
+    assert context["lisp_syntax_errors"] == ["a.lisp:1:1: Unbalanced"]
+    assert "lisp_syntax_repairs" not in context
 
 
 def test_unavailable_parser_never_authorizes_repair(tmp_path):
     def unavailable(*args):
         raise RuntimeError("Reader is unavailable")
 
+    path = tmp_path / "a.lisp"
+    path.write_text("(a)\n")
     guard = make_guard(tmp_path, fixed, check=unavailable)
-    assert guard.before_patch(call("(a)", "(b")) is None
+    block = {"op": "python_execution", "args": [{"code": "..."}], "result": {}}
+    guard.before_block(block)
+    path.write_text("(b\n")
+    guard.after_edit(block)
+    assert path.read_text() == "(b\n"
 
 
 def test_after_block_repairs_changed_files_and_reports_the_diff(tmp_path):

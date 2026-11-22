@@ -19,7 +19,7 @@ Import what you need:
   list argument that arrived as one bare string, and accepting keyword aliases.
 * `presentation` — the Activity rendering the results share.
 * `prompt` — the routing block the extension puts in the system prompt.
-* `syntax` — refusing a patch that breaks parsing, and reporting writes that did.
+* `syntax` — repairing and reporting writes that break parsing.
 """
 
 from vis_lang_interface.changes import line_changes

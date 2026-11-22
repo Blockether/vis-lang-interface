@@ -1,4 +1,4 @@
-"""A syntax guard refuses breaking patches and reports writes that broke parsing."""
+"""A syntax guard reports and repairs writes that broke parsing."""
 
 import os
 import runpy
@@ -44,15 +44,6 @@ def guard(tmp_path, parser):
     )
 
 
-def patched(before, after, path="src/core.lisp"):
-    """The call a before hook receives for a patch, with its preview."""
-    return {
-        "op": "patch",
-        "args": [path, []],
-        "preview": {"path": path, "before": before, "after": after},
-    }
-
-
 def written(root, name, text):
     path = Path(root) / name
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -64,70 +55,9 @@ def block():
     return {"op": "python_execution", "args": [{"code": "..."}], "result": {}}
 
 
-def test_a_patch_that_breaks_a_parseable_file_is_refused(guard):
-    refusal = guard.before_patch(patched("(a)\n", "(a\n"))
-    assert refusal["marker"] == "block"
-    assert refusal["reason"].startswith("src/core.lisp:2:1: EOF while reading.")
-    assert "nothing was written" in refusal["reason"]
-    # User report: the refusal named the file twice, once in its location.
-    assert refusal["reason"].count("src/core.lisp") == 1
-    assert "patch again" in refusal.get("hint", refusal["reason"])
-
-
-@pytest.mark.parametrize(
-    ("before", "after"),
-    [
-        ("(a)", "(b)"),
-        ("(a", "(b"),
-        ("(a", "(a)"),
-        ("(a)", "(a)"),
-    ],
-    ids=["stays-clean", "stays-broken", "repairs", "unchanged"],
-)
-def test_a_patch_that_keeps_or_restores_parsing_is_allowed(guard, before, after):
-    assert guard.before_patch(patched(before, after)) is None
-
-
-def test_a_file_the_parser_does_not_read_is_never_parsed(guard, parser):
-    assert guard.before_patch(patched("(a)", "(a", path="notes.md")) is None
-    assert parser.calls == []
-
-
 def test_suffixes_match_in_any_case(guard):
     assert guard.covers("deps.edn") and guard.covers("SRC/CORE.LISP")
     assert not guard.covers("core.lisp.orig")
-
-
-def test_a_patch_without_a_usable_preview_is_allowed(guard, parser):
-    assert guard.before_patch({"op": "patch", "args": ["src/core.lisp", []]}) is None
-    assert guard.before_patch({"op": "patch", "preview": {"path": "a.lisp"}}) is None
-    assert parser.calls == []
-
-
-def test_a_failing_parser_allows_the_patch_and_rests(guard, parser):
-    parser.error = RuntimeError("clojure is not installed")
-    assert guard.before_patch(patched("(a)", "(a")) is None
-    assert guard.before_patch(patched("(a)", "(b")) is None
-    assert len(parser.calls) == 1
-
-
-def test_a_patched_file_that_still_does_not_parse_is_reported(guard, tmp_path):
-    written(tmp_path, "src/core.lisp", "(ns core\n")
-    call = {"op": "patch", "args": ["src/core.lisp", []], "result": "patched"}
-    guard.after_edit(call)
-    assert guard.ctx() == {
-        "lisp_syntax_errors": ["src/core.lisp:2:1: EOF while reading"]
-    }
-    written(tmp_path, "src/core.lisp", "(ns core)\n")
-    guard.after_edit(call)
-    assert guard.ctx() == {}
-
-
-def test_a_refused_patch_is_not_parsed_again(guard, parser, tmp_path):
-    written(tmp_path, "src/core.lisp", "(a")
-    guard.after_edit({"op": "patch", "args": ["src/core.lisp", []], "result": None})
-    assert parser.calls == []
-    assert guard.ctx() == {}
 
 
 def test_a_python_block_that_writes_files_is_checked(guard, parser, tmp_path):
@@ -250,9 +180,8 @@ def test_the_context_names_a_bounded_number_of_files(guard, tmp_path):
 def test_each_workspace_keeps_its_own_report(tmp_path, parser):
     state = {}
     first, second = tmp_path / "one", tmp_path / "two"
-    written(first, "a.lisp", "(")
-    written(second, "a.lisp", "()")
-    for root in (first, second):
+    for root, source in ((first, "("), (second, "()")):
+        root.mkdir()
         guard = SyntaxGuard(
             "lisp",
             (".lisp",),
@@ -260,7 +189,9 @@ def test_each_workspace_keeps_its_own_report(tmp_path, parser):
             workspace_root=lambda root=root: root,
             state=state,
         )
-        guard.after_edit({"op": "patch", "args": ["a.lisp", []], "result": "patched"})
+        guard.before_block(block())
+        written(root, "a.lisp", source)
+        guard.after_edit(block())
     one = SyntaxGuard(
         "lisp", (".lisp",), parser, workspace_root=lambda: first, state=state
     )
@@ -276,18 +207,16 @@ def test_a_failing_workspace_lookup_never_breaks_an_operation(parser):
         raise RuntimeError("no session")
 
     guard = SyntaxGuard("lisp", (".lisp",), parser, workspace_root=missing, state={})
-    assert guard.before_patch(patched("(a)", "(a")) is None
     assert guard.before_block(block()) is None
     assert guard.after_edit(block()) is None
     assert guard.ctx() == {}
 
 
-def test_the_hooks_cover_patch_and_python_execution(guard):
+def test_the_hooks_cover_python_execution(guard):
     hooks = [(hook.ops, hook.phase) for hook in guard.op_hooks()]
     assert hooks == [
-        (("patch",), "before"),
         (("python_execution",), "before"),
-        (("patch", "python_execution"), "after"),
+        (("python_execution",), "after"),
     ]
 
 
@@ -313,7 +242,10 @@ def test_hooks_dispatch_only_to_the_parser_for_the_file_suffix(tmp_path):
         for language, suffixes in (("lisp", (".lisp",)), ("python", (".py", ".pyi")))
     ]
     for guard in guards:
-        guard.op_hooks()[0].fn(patched("before", "after", path="src/example.py"))
+        guard.op_hooks()[0].fn(block())
+    written(tmp_path, "src/example.py", "after")
+    for guard in guards:
+        guard.op_hooks()[1].fn(block())
     assert calls == [{"src/example.py": "after"}]
 
 
