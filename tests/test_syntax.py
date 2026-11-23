@@ -4,6 +4,7 @@ import os
 import runpy
 import shutil
 import threading
+import time
 from pathlib import Path
 
 import blockether.vis.extension as vis
@@ -350,3 +351,103 @@ def test_background_threads_never_call_the_host(
     assert logged == [threading.get_ident()]
     assert background._state.threads == {threading.get_ident()}
     assert ran == {threading.get_ident()}
+
+
+class SlowParser(Parser):
+    """A parser that waits until the test lets the check finish."""
+
+    def __init__(self):
+        super().__init__()
+        self.go = threading.Event()
+
+    def __call__(self, sources, root):
+        assert self.go.wait(10), "the test never let the check finish"
+        return super().__call__(sources, root)
+
+
+def test_a_slow_check_does_not_hold_the_context(tmp_path):
+    # A clojure context waited 15 s for the check of the last block.
+    parser, state = SlowParser(), HostState()
+    guard = SyntaxGuard(
+        "lisp",
+        (".lisp",),
+        parser,
+        workspace_root=lambda: tmp_path,
+        state=state,
+        background=True,
+    )
+    guard.ctx()
+    guard.before_block(block())
+    written(tmp_path, "old.lisp", "(")
+    parser.go.set()
+    guard.after_edit(block())
+    assert guard.ctx() == {"lisp_syntax_errors": ["old.lisp:1:1: EOF while reading"]}
+    parser.go.clear()
+    guard.before_block(block())
+    written(tmp_path, "old.lisp", "()")
+    written(tmp_path, "new.lisp", "(a")
+    guard.after_edit(block())
+    started = time.monotonic()
+    assert guard.ctx() == {
+        "lisp_syntax_errors": ["old.lisp:1:1: EOF while reading"],
+        "lisp_syntax_check": "running: the errors are from before the last Python block",
+    }
+    assert time.monotonic() - started < 2
+    parser.go.set()
+    job = guard._job
+    assert job is not None
+    job["thread"].join(10)
+    assert guard.ctx() == {"lisp_syntax_errors": ["new.lisp:1:1: EOF while reading"]}
+    assert state.threads == {threading.get_ident()}
+
+
+def test_the_next_block_waits_for_the_check_in_flight(tmp_path):
+    # The check and the next block share the file tree; only the context skips the wait.
+    parser = SlowParser()
+    guard = SyntaxGuard(
+        "lisp",
+        (".lisp",),
+        parser,
+        workspace_root=lambda: tmp_path,
+        state=HostState(),
+        background=True,
+    )
+    guard.ctx()
+    guard.before_block(block())
+    written(tmp_path, "a.lisp", "(")
+    guard.after_edit(block())
+    assert "lisp_syntax_check" in guard.ctx()
+    threading.Timer(0.2, parser.go.set).start()
+    guard.before_block(block())
+    assert guard._job is None
+    assert guard.ctx() == {"lisp_syntax_errors": ["a.lisp:1:1: EOF while reading"]}
+
+
+def test_a_slow_call_logs_where_its_time_went(tmp_path, monkeypatch):
+    logged = []
+    monkeypatch.setattr(vis, "log", lambda level, text: logged.append((level, text)))
+    parser = SlowParser()
+    guard = SyntaxGuard(
+        "lisp",
+        (".lisp",),
+        parser,
+        workspace_root=lambda: tmp_path,
+        state=HostState(),
+        background=True,
+    )
+    guard.ctx()
+    guard.before_block(block())
+    written(tmp_path, "a.lisp", "(")
+    guard.after_edit(block())
+    threading.Timer(0.3, parser.go.set).start()
+    guard.before_block(block())
+    lines = [text for level, text in logged if level == "info"]
+    check = next(line for line in lines if "check of 1 files:" in line)
+    before = next(line for line in lines if "before py3:" in line)
+    assert check.startswith("lisp syntax guard, check of 1 files: total=")
+    waits = dict(part.split("=") for part in before.split(": ", 1)[1].split())
+    assert set(waits) >= {"total", "cpu", "check", "gil"}
+    assert int(waits["check"].removesuffix("ms")) >= 200
+    assert int(waits["total"].removesuffix("ms")) >= int(
+        waits["check"].removesuffix("ms")
+    )

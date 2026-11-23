@@ -25,6 +25,7 @@ import tempfile
 import threading
 import time
 from collections.abc import Callable, Mapping
+from contextlib import contextmanager
 from pathlib import Path
 
 import blockether.vis.extension as vis
@@ -41,6 +42,10 @@ REFRESH_S = 300.0
 MOST_REPORTED = 20
 # After the parser fails, the guard stops asking it for this long.
 QUIET_S = 120.0
+# Longest time `ctx` waits for the post-block check. A longer check reports later.
+CONTEXT_WAIT_S = 0.1
+# A guard call or check that takes this long logs where its time went.
+SLOW_S = 0.1
 
 
 def _read_source(path):
@@ -119,45 +124,63 @@ class SyntaxGuard:
 
     def before_block(self, call):
         """List the workspace's files before a Python block can change them."""
+        timing = _Timing()
         try:
             with self._lock:
-                self._settle()
-                self._tree(Path(self._workspace_root()))
+                self._settle(timing=timing)
+                with timing.wait("host"):
+                    root = Path(self._workspace_root())
+                self._tree(root, timing)
         except Exception as error:
             self._log("before py3", error)
+        self._log_timing("before py3", timing)
         return None
 
     def after_edit(self, call):
         """Parse again what a Python block changed, and keep the report."""
+        timing = _Timing()
         try:
-            root = Path(self._workspace_root())
+            with timing.wait("host"):
+                root = Path(self._workspace_root())
             with self._lock:
-                self._settle()
+                self._settle(timing=timing)
                 if call.get("result") is None:
                     pass
                 elif self._background:
-                    self._start_check(root)
+                    self._start_check(root, timing)
                 else:
                     self._recheck(
-                        root, self._tree(root).changes(self.covers), repair=True
+                        root, self._tree(root, timing).changes(self.covers), repair=True
                     )
         except Exception as error:
             self._log(f"after {call.get('op')}", error)
+        self._log_timing(f"after {call.get('op')}", timing)
         return None
 
     def ctx(self, env=None):
-        """Session context naming the files under the workspace that do not parse."""
+        """Session context naming the files under the workspace that do not parse.
+
+        The context waits at most `CONTEXT_WAIT_S` for the check of the last
+        block. When that check still runs, the context gives the report from
+        before the block and says so; the next guard call stores the new report.
+        """
+        timing = _Timing()
         try:
-            root = self._context_root(env)
+            with timing.wait("host"):
+                root = self._context_root(env)
             with self._lock:
-                self._settle()
-                if self._background:
-                    self._prewarm(root)
-            report = self._report(root)
-            repairs = self._state.get(f"{self.language}_syntax_repairs:{root}", [])
+                checked = self._settle(CONTEXT_WAIT_S, timing)
+                # The check in flight uses the tree; a new listing waits for it.
+                if self._background and checked:
+                    self._prewarm(root, timing)
+            with timing.wait("host"):
+                report = self._report(root)
+                repairs = self._state.get(f"{self.language}_syntax_repairs:{root}", [])
         except Exception as error:
             self._log("context", error)
             return {}
+        finally:
+            self._log_timing("context", timing)
         rows = [
             f"{path}:{row.get('line', 0)}:{row.get('column', 0)}: {row.get('message', '')}"
             for path, row in sorted(report.items())
@@ -165,9 +188,13 @@ class SyntaxGuard:
         if len(rows) > MOST_REPORTED:
             hidden = len(rows) - MOST_REPORTED
             rows = [*rows[:MOST_REPORTED], f"... and {hidden} more files"]
-        context = {self.key: rows} if rows else {}
+        context: dict[str, list[str] | str] = {self.key: rows} if rows else {}
         if repairs:
             context[f"{self.language}_syntax_repairs"] = repairs
+        if not checked:
+            context[f"{self.language}_syntax_check"] = (
+                "running: the errors are from before the last Python block"
+            )
         return context
 
     def _context_root(self, env):
@@ -349,20 +376,23 @@ class SyntaxGuard:
         elif self._state.get(key):
             del self._state[key]
 
-    def _start_check(self, root):
+    def _start_check(self, root, timing):
         """Check what the block changed in a background thread; `_settle` stores it."""
         report = self._report(root)
-        tree = self._tree(root)
+        tree = self._tree(root, timing)
         tree.read_moved(self.covers)
-        job = {"root": root, "result": None, "logs": []}
+        job = {"root": root, "result": None, "logs": [], "timing": None}
 
         def check():
             self._local.logs = job["logs"]
+            timing = _Timing()
+            changed = {}
             try:
                 changed = tree.changes(self.covers, read=False)
                 job["result"] = self._rechecked(root, report, changed, True)
             except Exception as error:
                 job["logs"].append(("after py3", error))
+            job["timing"] = (timing, len(changed))
 
         job["thread"] = threading.Thread(
             target=check, name=f"vis-{self.language}-syntax-check", daemon=True
@@ -370,18 +400,30 @@ class SyntaxGuard:
         self._job = job
         job["thread"].start()
 
-    def _settle(self):
-        """Wait for the post-block check in flight, then store its report and logs."""
-        job, self._job = self._job, None
+    def _settle(self, wait=None, timing=None):
+        """Wait for the post-block check in flight, then store its report and logs.
+
+        With `wait`, stop waiting after that many seconds and keep the check in
+        flight. Returns whether no check is in flight now.
+        """
+        job = self._job
         if job is None:
-            return
-        job["thread"].join()
+            return True
+        with timing.wait("check") if timing else _no_wait():
+            job["thread"].join(wait)
+        if job["thread"].is_alive():
+            return False
+        self._job = None
         for where, error in job["logs"]:
             self._log(where, error)
+        if job["timing"] is not None:
+            check, files = job["timing"]
+            self._log_timing(f"check of {files} files", check)
         if job["result"] is not None:
             self._keep(job["root"], *job["result"])
+        return True
 
-    def _prewarm(self, root):
+    def _prewarm(self, root, timing):
         """List `root` here and build its tree in a background thread."""
         key = str(root)
         tree = self._trees.get(key)
@@ -389,7 +431,8 @@ class SyntaxGuard:
             tree is not None and time.monotonic() - tree.listed_at <= REFRESH_S
         ):
             return
-        files = _listing(root)
+        with timing.wait("listing"):
+            files = _listing(root)
         logs = []
 
         def build():
@@ -404,17 +447,19 @@ class SyntaxGuard:
         self._building[key] = (thread, logs)
         thread.start()
 
-    def _tree(self, root):
+    def _tree(self, root, timing):
         """The listed files under `root`, listed again when the listing is old."""
         building = self._building.pop(str(root), None)
         if building is not None:
             thread, logs = building
-            thread.join()
+            with timing.wait("tree"):
+                thread.join()
             for error in logs:
                 self._log("listing", error)
         tree = self._trees.get(str(root))
         if tree is None or time.monotonic() - tree.listed_at > REFRESH_S:
-            tree = _Tree(root, _listing(root), self.covers, tree)
+            with timing.wait("listing"):
+                tree = _Tree(root, _listing(root), self.covers, tree)
             self._trees[str(root)] = tree
         return tree
 
@@ -432,6 +477,16 @@ class SyntaxGuard:
         elif self._state.get(key):
             del self._state[key]
 
+    def _log_timing(self, where, timing):
+        """Log where a slow call spent its time; a background thread never logs."""
+        line = timing.line()
+        if line is None or getattr(self._local, "logs", None) is not None:
+            return
+        try:
+            vis.log("info", f"{self.language} syntax guard, {where}: {line}")
+        except Exception:
+            pass
+
     def _log(self, where, error):
         logs = getattr(self._local, "logs", None)
         if logs is not None:
@@ -441,6 +496,50 @@ class SyntaxGuard:
             vis.log("warn", f"{self.language} syntax guard, {where}: {error}")
         except Exception:
             pass
+
+
+class _Timing:
+    """Where one guard call spent its time, for one log line.
+
+    Each named wait counts its clock time. `cpu` is the time this thread ran.
+    `gil` is the rest of the time this thread did not run outside the named
+    waits. The guard does no other I/O there, so this is mostly the time the
+    thread waited for the GIL while other threads of the worker ran.
+    """
+
+    def __init__(self):
+        self._started = time.perf_counter()
+        self._cpu = time.thread_time()
+        self.waits = {}
+        self._waits_cpu = 0.0
+
+    @contextmanager
+    def wait(self, name):
+        """Count the clock time of the `with` body as the wait `name`."""
+        started, cpu = time.perf_counter(), time.thread_time()
+        try:
+            yield
+        finally:
+            self.waits[name] = self.waits.get(name, 0.0) + (
+                time.perf_counter() - started
+            )
+            self._waits_cpu += time.thread_time() - cpu
+
+    def line(self, slow=None):
+        """The log line, or None when the call took less than `slow` seconds."""
+        wall = time.perf_counter() - self._started
+        if wall < (SLOW_S if slow is None else slow):
+            return None
+        cpu = time.thread_time() - self._cpu
+        waited = sum(self.waits.values())
+        gil = max(0.0, wall - waited - (cpu - self._waits_cpu))
+        parts = [("total", wall), ("cpu", cpu), *self.waits.items(), ("gil", gil)]
+        return " ".join(f"{name}={seconds * 1000:.0f}ms" for name, seconds in parts)
+
+
+@contextmanager
+def _no_wait():
+    yield
 
 
 def _shown(root, path):
