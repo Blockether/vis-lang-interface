@@ -451,3 +451,43 @@ def test_a_slow_call_logs_where_its_time_went(tmp_path, monkeypatch):
     assert int(waits["total"].removesuffix("ms")) >= int(
         waits["check"].removesuffix("ms")
     )
+
+
+class BusyParser(Parser):
+    """A parser that keeps the CPU busy for 0.3 s."""
+
+    def __call__(self, sources, root):
+        end = time.thread_time() + 0.3
+        while time.thread_time() < end:
+            pass
+        return super().__call__(sources, root)
+
+
+def test_the_check_line_counts_only_the_check(tmp_path, monkeypatch):
+    # The line timed the check until the next guard call took its report, on that thread.
+    logged = []
+    monkeypatch.setattr(vis, "log", lambda level, text: logged.append(text))
+    guard = SyntaxGuard(
+        "lisp",
+        (".lisp",),
+        BusyParser(),
+        workspace_root=lambda: tmp_path,
+        state=HostState(),
+        background=True,
+    )
+    guard.ctx()
+    guard.before_block(block())
+    written(tmp_path, "a.lisp", "(")
+    guard.after_edit(block())
+    job = guard._job
+    assert job is not None
+    job["thread"].join(10)
+    time.sleep(0.7)
+    guard.before_block(block())
+    line = next(text for text in logged if "check of 1 files:" in text)
+    waits = {
+        name: int(value.removesuffix("ms"))
+        for name, value in (part.split("=") for part in line.split(": ", 1)[1].split())
+    }
+    assert 250 <= waits["total"] < 650, line
+    assert waits["cpu"] >= 250, line

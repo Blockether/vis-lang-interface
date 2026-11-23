@@ -392,6 +392,7 @@ class SyntaxGuard:
                 job["result"] = self._rechecked(root, report, changed, True)
             except Exception as error:
                 job["logs"].append(("after py3", error))
+            timing.stop()
             job["timing"] = (timing, len(changed))
 
         job["thread"] = threading.Thread(
@@ -512,6 +513,7 @@ class _Timing:
         self._cpu = time.thread_time()
         self.waits = {}
         self._waits_cpu = 0.0
+        self._stopped = None
 
     @contextmanager
     def wait(self, name):
@@ -525,12 +527,21 @@ class _Timing:
             )
             self._waits_cpu += time.thread_time() - cpu
 
+    def stop(self):
+        """End the call here, on its own thread; `line` may run later on another."""
+        self._stopped = (
+            time.perf_counter() - self._started,
+            time.thread_time() - self._cpu,
+        )
+
     def line(self, slow=None):
         """The log line, or None when the call took less than `slow` seconds."""
-        wall = time.perf_counter() - self._started
+        if self._stopped is None:
+            self.stop()
+        assert self._stopped is not None
+        wall, cpu = self._stopped
         if wall < (SLOW_S if slow is None else slow):
             return None
-        cpu = time.thread_time() - self._cpu
         waited = sum(self.waits.values())
         gil = max(0.0, wall - waited - (cpu - self._waits_cpu))
         parts = [("total", wall), ("cpu", cpu), *self.waits.items(), ("gil", gil)]
