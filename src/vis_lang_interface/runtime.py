@@ -36,8 +36,10 @@ import time
 
 from vis_lang_interface.process import (
     RUN_PREFIX,
+    _cancel_shell,
+    _shell_result,
+    attach_shell,
     is_hosted,
-    shell_call,
     spawn,
     tool_path,
 )
@@ -201,12 +203,12 @@ class Runtime:
     @property
     def id(self):
         """Id of the shell this runtime runs under."""
-        return self.shell.get("id")
+        return self.shell.id
 
     @property
     def pid(self):
         """Process id of the runtime itself."""
-        return self.shell.get("pid")
+        return self.shell.pid
 
     @property
     def exit_code(self):
@@ -336,7 +338,7 @@ class Runtime:
             return
         self._meeting.close()
         try:
-            self.shell.wait(5)
+            _shell_result(self.shell, 5)
         except Exception:
             pass
         self._stop_shell()
@@ -356,7 +358,7 @@ class Runtime:
 
     def _stop_shell(self):
         try:
-            self.shell.stop()
+            _cancel_shell(self.shell)
         except Exception:
             # An exited runtime has no entry left to stop, which is the outcome
             # this method wanted.
@@ -541,21 +543,21 @@ def _attach(shell_id, argv, cwd):
     the id is free for the new runtime.
     """
     try:
-        handle = shell_call()({"op": "logs", "id": shell_id, "offset": -1})
+        handle = attach_shell(shell_id)
     except Exception:
         return None
-    if str(handle.get("status")) != "running":
+    if str(handle.status) != "running":
         return None
-    path = _kept_rendezvous(handle.get("command"), argv)
+    path = _kept_rendezvous(handle.command, argv)
     meeting = None
-    if path and _same_directory(cwd, handle.get("cwd")):
+    if path and _same_directory(cwd, handle.cwd):
         try:
             meeting = Rendezvous(path=path).open()
         except OSError:
             meeting = None
     if meeting is None:
         try:
-            handle.stop()
+            _cancel_shell(handle)
         except Exception:
             pass
         return None

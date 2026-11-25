@@ -181,6 +181,13 @@ def shell_call():
     return vis.jailed_shell if is_hosted() else vis.shell
 
 
+def attach_shell(shell_id):
+    """Get the live shell without starting a child under this id."""
+    if hasattr(vis, "ShellFuture"):
+        return shell_call()({"op": "attach", "id": shell_id})
+    return shell_call()({"op": "logs", "id": shell_id, "offset": -1})
+
+
 def call_env():
     """Variables that a `before` op hook added to this tool call with `vis.with_env`.
 
@@ -238,8 +245,8 @@ def spawn(command, *, cwd=None, env=None, timeout_s=None, read_write=(), shell_i
             the same live child from a later process. None lets the host pick.
 
     Returns:
-        The shell handle: a mapping carrying `id`, `pid`, `status` and `exit`,
-        with `logs`, `wait`, `type` and `stop` on it.
+        A shell Future with `logs` and `type`. An older Vis host gives a
+        legacy shell handle.
     """
     options: dict[str, object] = {"command": str(command)}
     if cwd:
@@ -254,6 +261,21 @@ def spawn(command, *, cwd=None, env=None, timeout_s=None, read_write=(), shell_i
     if shell_id:
         options["id"] = str(shell_id)
     return shell_call()(options)
+
+
+def _shell_result(handle, timeout_s):
+    """Wait for the child without stopping it if the deadline passes."""
+    result = getattr(handle, "result", None)
+    if result is not None:
+        return result(timeout=timeout_s)
+    # Released extensions can still run on a host with the old handle API.
+    return handle.wait(timeout_s) if handle.get("status") == "running" else handle
+
+
+def _cancel_shell(handle):
+    """Stop the child owned by this handle."""
+    cancel = getattr(handle, "cancel", None)
+    return cancel() if cancel is not None else handle.stop()
 
 
 def run_directory(name="run"):
@@ -312,15 +334,14 @@ def run(command, *, cwd=None, timeout_s=300, stdin=None, env=None, read_write=()
             timeout_s=timeout_s,
             read_write=[work, *read_write],
         )
-        # A spawn answers as soon as it has a handle; the wait is where a
-        # command that is still running spends its budget.
-        settled = (
-            handle if handle.get("status") != "running" else handle.wait(timeout_s)
-        )
-        exit_code = settled.get("exit")
-        if settled.get("status") != "exited" or exit_code is None:
-            handle.stop()
-            raise ToolTimeout(f"{argv[0]} did not finish within {timeout_s}s")
+        try:
+            settled = _shell_result(handle, timeout_s)
+            exit_code = settled.get("exit")
+            if settled.get("status") != "exited" or exit_code is None:
+                raise TimeoutError
+        except TimeoutError:
+            _cancel_shell(handle)
+            raise ToolTimeout(f"{argv[0]} did not finish within {timeout_s}s") from None
         elapsed = int((time.monotonic() - started) * 1000)
         out, err = _read(out_file), _read(err_file)
         if int(exit_code) == 127 and "not found" in err:

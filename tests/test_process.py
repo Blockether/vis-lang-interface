@@ -1,6 +1,7 @@
 """Running a toolchain program reports its output, status and absence."""
 
 import sys
+from concurrent.futures import Future
 
 import blockether.vis.extension as vis
 import pytest
@@ -137,6 +138,23 @@ def test_vis_python_finds_vis_on_path_with_an_older_host(tmp_path, monkeypatch):
 def test_timeout_names_the_program():
     with pytest.raises(ToolTimeout, match="did not finish"):
         process.run([sys.executable, "-c", "import time; time.sleep(30)"], timeout_s=1)
+
+
+def test_run_reads_exit_from_a_shell_future(monkeypatch):
+    future = Future()
+    future.set_result({"status": "exited", "exit": 3})
+    monkeypatch.setattr(process, "spawn", lambda *args, **kwargs: future)
+
+    assert process.run([sys.executable]).exit_code == 3
+
+
+def test_run_cancels_a_shell_future_on_timeout(monkeypatch):
+    future = Future()
+    monkeypatch.setattr(process, "spawn", lambda *args, **kwargs: future)
+
+    with pytest.raises(ToolTimeout, match="did not finish"):
+        process.run([sys.executable], timeout_s=0)
+    assert future.cancelled()
 
 
 def test_inside_vis_every_child_goes_through_the_jail(monkeypatch):
