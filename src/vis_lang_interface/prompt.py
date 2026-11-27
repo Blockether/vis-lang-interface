@@ -44,6 +44,14 @@ VERBS = (
 _TOOLCHAIN = ("format_code", "lint_code", "run_tests", "build")
 """The verbs that run the toolchain once and answer a result."""
 
+_WORK = {
+    "format_code": "format",
+    "lint_code": "lint",
+    "run_tests": "test",
+    "build": "build",
+}
+"""What each toolchain verb does, as the shell line names it."""
+
 _REPL = ("repl_start", "repl_status", "repl_connect", "repl_eval", "repl_stop")
 """The verbs that own a runtime living between calls."""
 
@@ -122,15 +130,17 @@ def routing(language, alias, verbs=VERBS, *, notes=(), tools=None):
     else:
         lines.extend(f"  {_signature(alias, verb, tools)}" for verb in chosen)
     if toolchain:
+        work = [_WORK[verb] for verb in chosen if verb in _TOOLCHAIN]
+        named_work = " and ".join(filter(None, (", ".join(work[:-1]), work[-1])))
         lines.append(
-            f"Use these verbs, not a shell command, to format, lint and test {language}."
-            " Read their typed result; do not parse output."
+            f"Use these verbs, not a shell command, to {named_work} {language},"
+            " and read the typed result."
         )
     if repl:
         lines.append(
-            "A REPL stays alive after the call that started it, and nothing in the context"
-            f" shows that it is alive. `{alias}.repl_status` tells you; `{alias}.repl_stop` ends"
-            " it. Evaluate in a live REPL to check a change without a new toolchain startup."
+            "A REPL stays alive between calls, and nothing in the context shows it:"
+            f" `{alias}.repl_status` tells you, `{alias}.repl_stop` ends it."
+            " Evaluate there to check a change without a new startup."
         )
     lines.extend(text for text in (str(note).strip() for note in notes) if text)
     return "\n".join(lines)

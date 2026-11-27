@@ -37,6 +37,16 @@ def test_a_toolchain_verb_routes_away_from_a_shell_line():
     assert "repl_status" not in block
 
 
+def test_the_shell_line_names_only_the_work_that_the_verbs_do():
+    tests_only = prompt.routing("JavaScript", "js", ("run_tests", "repl_start"))
+    assert "to test JavaScript" in tests_only
+    assert "format" not in tests_only and "lint" not in tests_only
+    every = prompt.routing(
+        "Go", "go", ("build", "run_tests", "lint_code", "format_code")
+    )
+    assert "to format, lint, test and build Go" in every
+
+
 def test_a_repl_verb_says_a_live_runtime_is_reported_nowhere_else():
     block = prompt.routing("Clojure", "clj", ("repl_start", "repl_status", "repl_stop"))
     assert "nothing in the context" in block
