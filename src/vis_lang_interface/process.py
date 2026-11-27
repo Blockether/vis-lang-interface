@@ -18,12 +18,12 @@ when it is done.
 from __future__ import annotations
 
 import hashlib
-import math
 import os
 import shlex
 import shutil
 import tempfile
 import time
+from concurrent.futures import Future, wait
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated
@@ -176,7 +176,7 @@ def shell_call():
     driven by hand. There, the local shell runs the command.
 
     Returns:
-        The callable that takes one shell options map.
+        The callable that starts or attaches to a shell.
     """
     return vis.jailed_shell if is_hosted() else vis.shell
 
@@ -184,8 +184,9 @@ def shell_call():
 def attach_shell(shell_id):
     """Get the live shell without starting a child under this id."""
     if hasattr(vis, "ShellFuture"):
-        return shell_call()({"op": "attach", "id": shell_id})
-    return shell_call()({"op": "logs", "id": shell_id, "offset": -1})
+        return shell_call()(op="attach", id=shell_id)
+    # Older SDKs read the live process through the log operation.
+    return shell_call()(op="logs", id=shell_id, offset=-1)
 
 
 def call_env():
@@ -229,14 +230,12 @@ def env_fingerprint(values):
     }
 
 
-def spawn(command, *, cwd=None, env=None, timeout_s=None, read_write=(), shell_id=None):
+def spawn(command, *, cwd=None, env=None, read_write=(), shell_id=None):
     """Start one shell command as a confined child and answer its live handle.
 
     Args:
         command: The shell line to run.
         cwd: Directory to run in, or the current directory when omitted.
-        timeout_s: Seconds this call waits before answering. The child is not
-            killed when the wait ends. It keeps running under the handle's id.
         env: Variables for this child, over the ones it inherits. A name mapped
             to None is unset.
         read_write: Paths outside the session's own roots this child may read
@@ -248,28 +247,34 @@ def spawn(command, *, cwd=None, env=None, timeout_s=None, read_write=(), shell_i
         A shell Future with `logs` and `type`. An older Vis host gives a
         legacy shell handle.
     """
-    options: dict[str, object] = {"command": str(command)}
+    options: dict[str, object] = {}
     if cwd:
         options["cwd"] = str(cwd)
     if env:
         options["env"] = dict(env)
-    if timeout_s:
-        options["timeout_secs"] = max(1, int(math.ceil(float(timeout_s))))
-    grants = [str(path) for path in read_write]
-    if grants:
-        options["allow_read_write"] = grants
     if shell_id:
         options["id"] = str(shell_id)
-    return shell_call()(options)
+    if is_hosted() and read_write:
+        options["allow_read_write"] = [str(path) for path in read_write]
+    return shell_call()(str(command), **options)
+
+
+class _ShellWaitExpired(TimeoutError):
+    """The wait ended before the shell reached a final state."""
 
 
 def _shell_result(handle, timeout_s):
     """Wait for the child without stopping it if the deadline passes."""
-    result = getattr(handle, "result", None)
-    if result is not None:
-        return result(timeout=timeout_s)
+    if isinstance(handle, Future):
+        if not handle.done() and wait([handle], timeout=timeout_s).not_done:
+            raise _ShellWaitExpired
+        return handle.result()
     # Released extensions can still run on a host with the old handle API.
-    return handle.wait(timeout_s) if handle.get("status") == "running" else handle
+    if handle.get("status") == "running":
+        handle = handle.wait(timeout_s)
+    if handle.get("status") == "running":
+        raise _ShellWaitExpired
+    return handle
 
 
 def _cancel_shell(handle):
@@ -331,17 +336,23 @@ def run(command, *, cwd=None, timeout_s=300, stdin=None, env=None, read_write=()
             line,
             cwd=cwd,
             env={**call_env(), **dict(env or {})},
-            timeout_s=timeout_s,
             read_write=[work, *read_write],
         )
         try:
-            settled = _shell_result(handle, timeout_s)
-            exit_code = settled.get("exit")
-            if settled.get("status") != "exited" or exit_code is None:
-                raise TimeoutError
-        except TimeoutError:
+            remaining = (
+                None
+                if timeout_s is None
+                else max(0, timeout_s - (time.monotonic() - started))
+            )
+            settled = _shell_result(handle, remaining)
+        except _ShellWaitExpired:
             _cancel_shell(handle)
+            if isinstance(handle, Future) and not handle.done():
+                wait([handle], timeout=5)
             raise ToolTimeout(f"{argv[0]} did not finish within {timeout_s}s") from None
+        exit_code = settled.get("exit")
+        if settled.get("status") != "exited" or exit_code is None:
+            raise RuntimeError(f"{argv[0]} ended without an exit status")
         elapsed = int((time.monotonic() - started) * 1000)
         out, err = _read(out_file), _read(err_file)
         if int(exit_code) == 127 and "not found" in err:

@@ -39,16 +39,12 @@ from vis_lang_interface.process import (
     _cancel_shell,
     _shell_result,
     attach_shell,
-    is_hosted,
     spawn,
     tool_path,
 )
 
 DEFAULT_TIMEOUT_S = 120.0
 """Seconds `request` waits for an answer when the caller names no budget."""
-
-SPAWN_WAIT_S = 1
-"""Seconds the spawning call waits before the runtime becomes a background child."""
 
 LOG_TAIL_LINES = 40
 """Lines of the runtime's own output a failure hands back."""
@@ -501,11 +497,6 @@ def start(
             line,
             cwd=cwd,
             env={**dict(env or {}), "VIS_LANG_RENDEZVOUS": meeting.path},
-            # Inside Vis this is only how long the spawning call waits: the
-            # runtime keeps running under its handle afterwards. The local host
-            # outside Vis reads the same key as a kill deadline, and a runtime
-            # is meant to outlive its start, so out there it stays unset.
-            timeout_s=SPAWN_WAIT_S if is_hosted() else None,
             read_write=[meeting.path, *read_write],
             shell_id=shell_id,
         )

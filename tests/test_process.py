@@ -148,6 +148,16 @@ def test_run_reads_exit_from_a_shell_future(monkeypatch):
     assert process.run([sys.executable]).exit_code == 3
 
 
+def test_a_terminal_host_timeout_is_not_a_run_timeout(monkeypatch):
+    future = Future()
+    error = TimeoutError("host operation failed")
+    future.set_exception(error)
+    monkeypatch.setattr(process, "spawn", lambda *args, **kwargs: future)
+    with pytest.raises(TimeoutError) as raised:
+        process.run([sys.executable])
+    assert raised.value is error
+
+
 def test_run_cancels_a_shell_future_on_timeout(monkeypatch):
     future = Future()
     monkeypatch.setattr(process, "spawn", lambda *args, **kwargs: future)
@@ -169,19 +179,42 @@ def _recorded(monkeypatch):
     seen = []
     started = vis.shell
 
-    def recording(options):
-        seen.append(dict(options))
-        return started(options)
+    def recording(command, *, allow_read_write, **options):
+        seen.append(allow_read_write)
+        return started(command, **options)
 
-    monkeypatch.setattr(vis, "shell", recording)
+    monkeypatch.delattr(vis, "outside")
+    monkeypatch.setattr(vis, "jailed_shell", recording)
     return seen
+
+
+def test_a_local_run_uses_only_public_start_options(monkeypatch):
+    started = vis.shell
+
+    def strict(command, *, cwd=None, id=None, env=None, stdin=None):
+        assert isinstance(command, str)
+        return started(command, cwd=cwd, id=id, env=env, stdin=stdin)
+
+    monkeypatch.setattr(vis, "shell", strict)
+    assert process.run([sys.executable, "-c", "print('hi')"], timeout_s=5).out == "hi\n"
+
+
+def test_a_run_reads_a_completed_future_without_a_result_timeout(monkeypatch):
+    class Finished(Future):
+        def result(self):
+            return super().result(timeout=0)
+
+    future = Finished()
+    future.set_result({"status": "exited", "exit": 3})
+    monkeypatch.setattr(process, "spawn", lambda *args, **kwargs: future)
+    assert process.run([sys.executable]).exit_code == 3
 
 
 def test_a_run_grants_only_its_own_directory_by_default(monkeypatch):
     seen = _recorded(monkeypatch)
     done = process.run([sys.executable, "-c", "print('hi')"])
     assert done.is_ok is True
-    granted = seen[0]["allow_read_write"]
+    granted = seen[0]
     assert len(granted) == 1
     assert process.RUN_PREFIX in granted[0]
 
@@ -193,7 +226,7 @@ def test_a_run_carries_the_paths_its_caller_named(monkeypatch, tmp_path):
     seen = _recorded(monkeypatch)
     done = process.run([sys.executable, "-c", "print('hi')"], read_write=[cache])
     assert done.is_ok is True
-    granted = seen[0]["allow_read_write"]
+    granted = seen[0]
     assert str(cache) in granted
     assert len(granted) == 2
     assert process.RUN_PREFIX in granted[0]
