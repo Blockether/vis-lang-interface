@@ -8,6 +8,7 @@ never disagree with the list below it.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Annotated
 
@@ -18,6 +19,9 @@ SHOWN_TEXT = 200
 
 SHOWN_TAIL = 1500
 """Characters of runner output that a printed failed run shows when no failure was parsed."""
+
+SHOWN_FAILURES = 5
+"""Failures that a printed failed run shows; the others stay in `failures`."""
 
 PRESET = "preset:"
 """The `chosen_by` prefix of a command that detection picked, not the person's configuration."""
@@ -47,6 +51,54 @@ def _unguessed(result):
     return () if result.chosen_by.startswith(PRESET) else ("command", "chosen_by")
 
 
+def _preview(text, field, limit, *, tail=False):
+    """Keep a bounded part of the text and name the full field when cut."""
+    if len(text) <= limit:
+        return text
+    note = f"[… {len(text)} chars; read {field}]"
+    if tail:
+        return f"{note}\n{text[-limit:].lstrip()}"
+    return f"{text[:limit].rstrip()}\n{note}"
+
+
+def _location(path, line, column=0):
+    location = path or "source"
+    if line:
+        location += f":{line}"
+        if column:
+            location += f":{column}"
+    return location
+
+
+def _count(count, singular):
+    return f"{count} {singular}{'' if count == 1 else 's'}"
+
+
+def _preset(chosen_by):
+    return f" ({chosen_by})" if chosen_by.startswith(PRESET) else ""
+
+
+_EXCEPTION_LINE = re.compile(
+    r"^(?:[\w.$]+\.)?[\w$]*(?:Error|Exception|Failure|Throwable)\b"
+)
+
+
+def _failure_preview(message, field):
+    if len(message) <= 500:
+        return message
+    # Keep the first reason and the last exception line, even inside a traceback.
+    lines = (
+        line.lstrip().removeprefix("E   ").strip()
+        for line in reversed(message.splitlines())
+    )
+    exception = next((line for line in lines if _EXCEPTION_LINE.match(line)), "")
+    if exception and exception in message[:500]:
+        return _preview(message, field, 500)
+    end = exception[:300] if exception else message[-300:].lstrip()
+    reason = message[: 499 - len(end)].rstrip()
+    return f"{reason}\n[… {len(message)} chars; read {field}]\n{end}"
+
+
 @dataclass(frozen=True)
 class Diagnostic:
     """One located finding from a linter, compiler or formatter."""
@@ -57,6 +109,11 @@ class Diagnostic:
     level: Annotated[str, "Severity: error, warning or info."]
     message: Annotated[str, "What the tool reported."]
     rule: Annotated[str, "Rule that fired; empty when the tool names none."] = ""
+
+    def __str__(self):
+        location = _location(self.path, self.line, self.column)
+        label = f"{self.level} {self.rule}" if self.rule else self.level
+        return f"{location} {label} {self.message}".rstrip()
 
     def __post_init__(self):
         if self.level not in LEVELS:
@@ -86,6 +143,25 @@ class FormatResult:
         "Who chose the command: project, global, or preset:<name> when detection picked it.",
     ] = ""
 
+    def __str__(self):
+        if self.source:
+            status = "formatted source"
+        elif self.changed:
+            action = "reformatted" if self.is_written else "would reformat"
+            status = f"{action} {_count(len(self.changed), 'file')}"
+        else:
+            status = "no changes"
+        if self.unchanged:
+            status += f", {len(self.unchanged)} unchanged"
+        if self.lines_added or self.lines_removed:
+            status += f" +{self.lines_added}/-{self.lines_removed}"
+        rows = [f"{self.language}: {status}{_preset(self.chosen_by)}"]
+        if self.source:
+            rows.append(_preview(self.source, ".source", 500))
+        if self.changed:
+            rows.append(_preview("\n".join(self.changed), ".changed", 500))
+        return "\n".join(rows)
+
     def __repr__(self):
         """A printed result gives a long formatted text only as its size, and the
         command only when detection picked it."""
@@ -109,6 +185,40 @@ class LintResult:
         str,
         "Who chose the command: project, global, or preset:<name> when detection picked it.",
     ] = ""
+
+    def __str__(self):
+        files = _count(self.files, "file")
+        heading = f"{self.language} lint{_preset(self.chosen_by)}, {files}"
+        if self.is_clean:
+            return f"{heading}: clean"
+        groups = {}
+        for row in self.diagnostics:
+            messages = groups.setdefault((row.level, row.rule), {})
+            messages.setdefault(row.message, []).append(
+                _location(row.path, row.line, row.column)
+            )
+        infos = len(self.diagnostics) - self.errors - self.warnings
+        counts = ", ".join(
+            _count(count, label)
+            for count, label in (
+                (self.errors, "error"),
+                (self.warnings, "warning"),
+                (infos, "info finding"),
+            )
+            if count
+        )
+        rows = []
+        for (level, rule), messages in groups.items():
+            label = f"{level} {rule}" if rule else level
+            count = sum(map(len, messages.values()))
+            if count > 1:
+                rows.append(f"{label} ×{count}")
+            for message, locations in messages.items():
+                locations = ", ".join(locations)
+                prefix = f"  {locations}" if count > 1 else f"{locations} {label}"
+                rows.append(f"{prefix} {message}".rstrip())
+        findings = _preview("\n".join(rows), ".diagnostics", 1500)
+        return f"{heading}: {counts}\n{findings}"
 
     def __repr__(self):
         """A printed result gives the command only when detection picked it."""
@@ -161,6 +271,17 @@ class TestFailure:
     path: Annotated[str, "File containing the test; empty when unknown."]
     line: Annotated[int, "1-based line, or 0 when the runner located nothing."]
     message: Annotated[str, "Why it failed: the reason first, its details below."]
+
+    def _summary(self, field):
+        test = self.test or "unknown test"
+        if self.path or self.line:
+            test += f" ({_location(self.path, self.line)})"
+        return (
+            f"{test}\n{_failure_preview(self.message, field)}" if self.message else test
+        )
+
+    def __str__(self):
+        return self._summary(".message")
 
 
 @dataclass(frozen=True)
@@ -259,6 +380,33 @@ class TestResult:
     coverage: Annotated[
         CoverageResult | None, "Coverage of the run; None unless it was asked for."
     ] = None
+
+    def __str__(self):
+        if not self.is_passed:
+            verdict = "failed"
+        elif not self.total:
+            verdict = "no tests ran"
+        else:
+            verdict = "passed"
+        counts = f"{self.passed}/{self.total} passed"
+        if self.failed:
+            counts += f", {self.failed} failed"
+        if self.skipped:
+            counts += f", {self.skipped} skipped"
+        rows = [f"{self.language} tests {verdict}: {counts} ({self.duration_ms} ms)"]
+        for i, failure in enumerate(self.failures[:SHOWN_FAILURES]):
+            rows.append(failure._summary(f".failures[{i}].message"))
+        if len(self.failures) > SHOWN_FAILURES:
+            more = len(self.failures) - SHOWN_FAILURES
+            rows.append(f"[… {more} more failures; read .failures]")
+        if self.output:
+            if self.failures or (self.is_passed and self.total):
+                rows.append(f"Runner output: {len(self.output)} chars; read .output")
+            else:
+                rows.append(_preview(self.output, ".output", SHOWN_TAIL, tail=True))
+        if self.coverage is not None:
+            rows.append(f"Coverage: {self.coverage.percent}% (read .coverage)")
+        return "\n".join(rows)
 
     def __repr__(self):
         """A printed result gives the runner output only as its size.
@@ -378,6 +526,19 @@ class ReplResult:
         "Structural repairs made to the code before it was evaluated, one note each.",
     ] = ()
 
+    def __str__(self):
+        state = "error" if self.error else "ok" if self.is_running else "not running"
+        if self.error and not self.is_running:
+            state += ", not running"
+        rows = [f"{self.language} REPL {state} ({self.duration_ms} ms)"]
+        for field in ("error", "value", "output", "repairs"):
+            value = getattr(self, field)
+            if value:
+                if field == "repairs":
+                    value = "; ".join(value)
+                rows.append(f"{field}: {_preview(value, f'.{field}', 500)}")
+        return "\n".join(rows)
+
 
 @dataclass(frozen=True)
 class ReplSession:
@@ -389,3 +550,10 @@ class ReplSession:
     command: Annotated[tuple[str, ...], "Command that launched it."]
     is_running: Annotated[bool, "Whether the process is alive now."]
     detail: Annotated[str, "What happened, for the transcript."] = ""
+
+    def __str__(self):
+        state = "running" if self.is_running else "not running"
+        heading = f"{self.language} REPL {state}"
+        if self.detail:
+            return f"{heading}\n{_preview(self.detail, '.detail', 600)}"
+        return heading
