@@ -201,7 +201,8 @@ def test_a_local_run_uses_only_public_start_options(monkeypatch):
 
 def test_a_run_reads_a_completed_future_without_a_result_timeout(monkeypatch):
     class Finished(Future):
-        def result(self):
+        def result(self, timeout=None):
+            assert timeout is None
             return super().result(timeout=0)
 
     future = Finished()
