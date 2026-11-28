@@ -1,10 +1,10 @@
 [project]
 name = "vis-lang-interface"
-version = "4.3.1"
+version = "4.3.2"
 description = "The shared contract for Vis language extensions."
 keywords = ["language-tools", "development"]
 requires-python = ">=3.12"
-dependencies = ["vis-agent>=0.5.30"]
+dependencies = ["vis-agent>=0.6.0"]
 
 [tool.vis]
 category = "tools"
