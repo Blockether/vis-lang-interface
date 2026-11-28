@@ -23,7 +23,7 @@ import shlex
 import shutil
 import tempfile
 import time
-from concurrent.futures import Future, wait
+from concurrent.futures import wait
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated
@@ -183,10 +183,7 @@ def shell_call():
 
 def attach_shell(shell_id):
     """Get the live shell without starting a child under this id."""
-    if hasattr(vis, "ShellFuture"):
-        return shell_call()(op="attach", id=shell_id)
-    # Older SDKs read the live process through the log operation.
-    return shell_call()(op="logs", id=shell_id, offset=-1)
+    return shell_call()(op="attach", id=shell_id)
 
 
 def call_env():
@@ -244,8 +241,7 @@ def spawn(command, *, cwd=None, env=None, read_write=(), shell_id=None):
             the same live child from a later process. None lets the host pick.
 
     Returns:
-        A shell Future with `logs` and `type`. An older Vis host gives a
-        legacy shell handle.
+        A shell Future with `logs` and `type`.
     """
     options: dict[str, object] = {}
     if cwd:
@@ -265,22 +261,9 @@ class _ShellWaitExpired(TimeoutError):
 
 def _shell_result(handle, timeout_s):
     """Wait for the child without stopping it if the deadline passes."""
-    if isinstance(handle, Future):
-        if not handle.done() and wait([handle], timeout=timeout_s).not_done:
-            raise _ShellWaitExpired
-        return handle.result()
-    # Released extensions can still run on a host with the old handle API.
-    if handle.get("status") == "running":
-        handle = handle.wait(timeout_s)
-    if handle.get("status") == "running":
+    if not handle.done() and wait([handle], timeout=timeout_s).not_done:
         raise _ShellWaitExpired
-    return handle
-
-
-def _cancel_shell(handle):
-    """Stop the child owned by this handle."""
-    cancel = getattr(handle, "cancel", None)
-    return cancel() if cancel is not None else handle.stop()
+    return handle.result()
 
 
 def run_directory(name="run"):
@@ -346,8 +329,8 @@ def run(command, *, cwd=None, timeout_s=300, stdin=None, env=None, read_write=()
             )
             settled = _shell_result(handle, remaining)
         except _ShellWaitExpired:
-            _cancel_shell(handle)
-            if isinstance(handle, Future) and not handle.done():
+            handle.cancel()
+            if not handle.done():
                 wait([handle], timeout=5)
             raise ToolTimeout(f"{argv[0]} did not finish within {timeout_s}s") from None
         exit_code = settled.get("exit")

@@ -1,7 +1,6 @@
 """The routing block every language extension contributes reads the same way."""
 
 import collections.abc
-import typing
 from typing import Annotated
 
 import pytest
@@ -89,7 +88,7 @@ class _Tools:
         """Run the tests."""
         raise NotImplementedError
 
-    def repl_eval(self, code: str, *, cwd: str = "") -> typing.Optional[str]:
+    def repl_eval(self, code: str, *, cwd: str = "") -> str | None:
         """Evaluate code."""
         raise NotImplementedError
 
@@ -105,7 +104,7 @@ def test_tools_give_each_verb_its_callable_signature_in_contract_order():
     assert block.splitlines()[1:4] == [
         "  py.run_tests(paths=(), *, keyword='', timeout_s=900) -> TestResult",
         "  py.repl_status(cwd='') -> Sequence[str]",
-        "  py.repl_eval(code, *, cwd='') -> Optional[str]",
+        "  py.repl_eval(code, *, cwd='') -> str | None",
     ]
 
 

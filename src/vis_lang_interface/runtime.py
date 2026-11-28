@@ -36,7 +36,6 @@ import time
 
 from vis_lang_interface.process import (
     RUN_PREFIX,
-    _cancel_shell,
     _shell_result,
     attach_shell,
     spawn,
@@ -354,7 +353,7 @@ class Runtime:
 
     def _stop_shell(self):
         try:
-            _cancel_shell(self.shell)
+            self.shell.cancel()
         except Exception:
             # An exited runtime has no entry left to stop, which is the outcome
             # this method wanted.
@@ -537,7 +536,7 @@ def _attach(shell_id, argv, cwd):
         handle = attach_shell(shell_id)
     except Exception:
         return None
-    if str(handle.status) != "running":
+    if handle.done():
         return None
     path = _kept_rendezvous(handle.command, argv)
     meeting = None
@@ -548,7 +547,7 @@ def _attach(shell_id, argv, cwd):
             meeting = None
     if meeting is None:
         try:
-            _cancel_shell(handle)
+            handle.cancel()
         except Exception:
             pass
         return None
